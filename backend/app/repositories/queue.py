@@ -14,6 +14,16 @@ def now_ms():
     return time.time_ns() // 1_000_000
 
 
+def find_receipt(db_path: Path, request_id: str):
+    with connect(db_path) as db:
+        row = db.execute(
+            """SELECT media.id AS media_id, jobs.id AS job_id FROM media JOIN jobs
+               ON jobs.media_id = media.id AND jobs.attempt = 1 WHERE request_id = ?""",
+            (request_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
 def _enqueue(db, media_id, attempt):
     job_id = str(uuid4())
     db.execute(

@@ -3,12 +3,17 @@ import shutil
 import time
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
+from app.api.uploads import upload_router
 from app.config import Settings
+from app.errors import ServiceError
 from app.repositories.database import connect, migrate
+from app.storage.uploads import recover_uploads
 
 
 class WorkerHealth(BaseModel):
@@ -32,11 +37,26 @@ def create_app(settings: Settings | None = None):
     async def lifespan(app):
         settings.prepare()
         migrate(settings.database)
+        await run_in_threadpool(recover_uploads, settings.data_dir, settings.database)
         yield
 
     # Disable CDN-backed Swagger/ReDoc pages: OpenAPI JSON stays available.
     app = FastAPI(title="ReCue", version="0.1.0", lifespan=lifespan,
                   docs_url=None, redoc_url=None)
+
+    @app.exception_handler(ServiceError)
+    async def service_error(request, exc):
+        return JSONResponse(status_code=exc.status, content={
+            "code": exc.code, "message": exc.message, "retryable": exc.retryable,
+        })
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request, exc):
+        return JSONResponse(status_code=422, content={
+            "code": "invalid_request", "message": "请求参数无效，请检查请求ID和文件名", "retryable": False,
+        })
+
+    app.include_router(upload_router(settings))
 
     @app.middleware("http")
     async def same_origin(request: Request, call_next):

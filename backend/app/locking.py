@@ -3,6 +3,10 @@ from pathlib import Path
 import os
 
 
+class AlreadyRunning(RuntimeError):
+    pass
+
+
 @contextmanager
 def instance_lock(path: Path):
     """OS-owned lock: a crash releases ownership without stale-PID guesses."""
@@ -20,7 +24,7 @@ def instance_lock(path: Path):
                 import fcntl
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as exc:
-            raise RuntimeError(f"Already running: {path.stem}") from exc
+            raise AlreadyRunning(f"Already running: {path.stem}") from exc
         try:
             yield
         finally:
