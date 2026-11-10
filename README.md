@@ -2,7 +2,7 @@
 
 个人局域网音视频转写与定位复习工具。
 
-采用 React + TypeScript、FastAPI 和 SQLite，Windows 原生运行。当前提供服务健康页、单文件接收API及队列事务基础；上传界面、识别和讲稿阅读尚未实现。
+采用 React + TypeScript、FastAPI 和 SQLite，Windows 原生运行。当前提供服务健康页、文件接收/列表/详情/重试API及队列事务基础；上传界面、识别和讲稿阅读尚未实现。
 
 已建立媒体接收登记与队列的数据库事务基础：重复请求ID返回原接收记录、失败/中断任务以新attempt重试、FIFO领取且全局仅一个运行任务。worker取得单实例锁后将上次运行中的任务标记为中断，排队任务保留；单独重启API不影响运行任务。worker暂不领取任务，等待真实媒体处理器接入。
 
@@ -27,7 +27,15 @@
 - 首次完整接收返回201及 `request_id/media_id/job_id/status`，`status=received`仅表示文件保存并入队，不表示音轨、时长、可解码性或识别通过。文件名仅展示，存储路径由服务端生成。
 - `GET /api/uploads/{request_id}` 查询已完成接收结果。响应丢失时先查询；404表示尚无已完成记录，上传可能仍在进行。使用相同ID重放已完成请求返回200及原结果，即使新请求内容不同也不会替换原文件；上传新文件须使用新ID。不支持断点续传。
 - 每次接收一个文件；其他新上传返回409 `upload_busy`，可以稍后查询或重试。大小上限为4GiB（4,294,967,296字节），按实际接收字节检查；空文件、超限、接收中断不入队，磁盘空间不足返回507。连续60秒没有新数据会超时。
-- API启动扫描与上传共用系统锁；活跃上传时跳过扫描。清理遗留UUID临时文件及超过24小时且无数据库引用的原文件，保留已登记媒体及未知文件；清理失败保留文件供下次启动重试。请勿手工将文件放入服务管理的UUID目录。当前尚无定时清理或上传页面。
+- API启动及运行中每小时扫描，与上传共用系统锁；活跃上传时跳过扫描。清理遗留UUID临时文件及超过24小时且无数据库引用的原文件，保留已登记媒体及未知文件；清理失败保留文件供下一轮扫描重试。请勿手工将文件放入服务管理的UUID目录。当前尚无上传页面。
+
+媒体查询与重试：
+
+- `GET /api/media?limit=20&cursor=...`：按 `created_at/id` 倒序返回 `items/next_cursor`，limit范围1–100；游标为空表示首屏，`next_cursor=null` 表示没有下一页。刷新首屏可获取新导入的文件。
+- `GET /api/media/{media_id}`：媒体元数据和 `latest_job`，包含真实任务状态、阶段、attempt、错误及处理配置；不返回服务端文件路径。时间均为Unix毫秒，未解析的时长/媒体类型为null，表示尚未验证。
+- `POST /api/media/{media_id}/retry`：仅失败或中断且生命周期active的媒体可重试，创建新attempt后返回201及media_id/job_id；并发重复或状态冲突返回409，媒体不存在404。旧attempt及错误保留。
+
+前端API类型由FastAPI OpenAPI生成，修改API Schema后运行 `npm --prefix frontend run api:generate`，用 `npm --prefix frontend run api:check` 检查是否过期。导出无需启动服务或创建数据库。生成器使用独立npm工作区锁定openapi-typescript及其TypeScript 5依赖，应用继续使用TypeScript 7；`npm ci`会同时安装两个工作区。
 
 验证（需先完成安装和前端构建）：
 
@@ -35,4 +43,6 @@
 uv lock --check --offline
 uv pip check
 uv run --offline --locked python -m unittest discover -s tests -v
+npm --prefix frontend run api:check
+npm --prefix frontend run build
 ```

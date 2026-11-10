@@ -3,7 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": { "dev": "vite --host 127.0.0.1", "build": "tsc --noEmit && vite build" },
+  "workspaces": ["tools/api-types"],
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "api:generate": "node tools/api-types/generate.mjs",
+    "api:check": "node tools/api-types/generate.mjs --check"
+  },
   "dependencies": { "react": "19.3.1", "react-dom": "19.3.1" },
   "devDependencies": { "@types/react": "19.3.0", "@types/react-dom": "19.3.0", "typescript": "7.0.2", "vite": "8.3.7" }
 }

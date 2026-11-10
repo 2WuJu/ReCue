@@ -1,11 +1,9 @@
 import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
+import type { components } from './api/schema';
 
-type Health = {
-  status: string; database: string; worker: { status: string };
-  ffmpeg_available: boolean; model_file_available: boolean; transcription_ready: boolean;
-};
+type Health = components['schemas']['Health'];
 
 function App() {
   const [health, setHealth] = useState<Health | null>(null);

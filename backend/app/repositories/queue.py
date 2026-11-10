@@ -10,6 +10,10 @@ class QueueConflict(Exception):
     """The media lifecycle or current attempt does not allow this operation."""
 
 
+class MediaNotFound(QueueConflict):
+    pass
+
+
 def now_ms():
     return time.time_ns() // 1_000_000
 
@@ -63,10 +67,12 @@ def retry(db_path: Path, media_id: str):
     with connect(db_path) as db, db:
         db.execute("BEGIN IMMEDIATE")
         media = db.execute("SELECT lifecycle FROM media WHERE id = ?", (media_id,)).fetchone()
+        if not media:
+            raise MediaNotFound("Media does not exist")
         job = db.execute(
             "SELECT * FROM jobs WHERE media_id = ? ORDER BY attempt DESC LIMIT 1", (media_id,),
         ).fetchone()
-        if not media or media["lifecycle"] != "active" or not job or job["status"] not in (
+        if media["lifecycle"] != "active" or not job or job["status"] not in (
             "failed", "interrupted",
         ):
             raise QueueConflict("Only failed/interrupted active media can be retried")
