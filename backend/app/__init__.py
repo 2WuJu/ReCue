@@ -1,0 +1,1 @@
+"""ReCue local application."""

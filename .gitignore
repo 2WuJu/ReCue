@@ -1,0 +1,19 @@
+.tools/
+.venv/
+data/
+models/
+node_modules/
+frontend/dist/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example
+!.env.template
+.pytest_cache/
+*.log
+
+# Local planning, AI context, design drafts and private history backups.
+/docs/
+/.design/
+/.local/
