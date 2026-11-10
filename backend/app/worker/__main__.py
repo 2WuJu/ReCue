@@ -8,6 +8,7 @@ from uuid import uuid4
 from app.config import Settings
 from app.locking import instance_lock
 from app.repositories.database import connect, migrate
+from app.worker.recovery import interrupt_previous_jobs
 
 
 def main():
@@ -19,6 +20,7 @@ def main():
         signal.signal(sig, lambda *_: stop.set())
     with instance_lock(settings.data_dir / "runtime" / "worker.lock"):
         migrate(settings.database)
+        recovered = interrupt_previous_jobs(settings.database)
         worker_id = str(uuid4())
 
         def heartbeat(state):
@@ -28,7 +30,7 @@ def main():
                     (worker_id, os.getpid(), time.time(), state),
                 )
 
-        logging.info("Worker started; queue processing is not implemented (T03/T04)")
+        logging.info("Worker started; interrupted %s old jobs; processing awaits T04", recovered)
         try:
             while not stop.is_set():
                 heartbeat("idle")

@@ -12,7 +12,8 @@ from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
-from app.repositories.database import connect, migrate
+from app.repositories.database import MIGRATIONS, connect, migrate
+from app.repositories.queue import claim_next, received
 
 
 class FoundationTests(unittest.TestCase):
@@ -58,7 +59,7 @@ class FoundationTests(unittest.TestCase):
                 db.execute("INSERT INTO worker_status VALUES (1, 'existing', 1, 0, 'stopped')")
             migrate(path)
             with connect(path) as db:
-                self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 1)
+                self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], MIGRATIONS[-1][0])
                 self.assertEqual(db.execute("SELECT worker_id FROM worker_status").fetchone()[0], "existing")
                 self.assertEqual(db.execute("PRAGMA foreign_keys").fetchone()[0], 1)
                 self.assertEqual(db.execute("PRAGMA journal_mode").fetchone()[0], "wal")
@@ -92,6 +93,9 @@ class FoundationTests(unittest.TestCase):
                     with connect(db_path) as db:
                         return db.execute("SELECT * FROM worker_status").fetchone()
                 original = wait_for(worker_record)["worker_id"]
+                received(db_path, request_id="api-restart", media_id="api-restart-media",
+                         display_name="restart.wav", source_path="media/api-restart/source", size_bytes=1)
+                running = claim_next(db_path, original)
                 duplicate = launch("-m", "app.worker")
                 self.assertNotEqual(duplicate.wait(timeout=15), 0)
                 self.assertIsNone(worker.poll())
@@ -108,6 +112,10 @@ class FoundationTests(unittest.TestCase):
                     self.assertEqual(health["worker"]["status"], "idle")
                     self.assertFalse(health["transcription_ready"])
                     self.assertEqual(wait_for(worker_record)["worker_id"], original)
+                    with connect(db_path) as db:
+                        job = db.execute("SELECT * FROM jobs WHERE id=?", (running["id"],)).fetchone()
+                    self.assertEqual(job["status"], "running")
+                    self.assertEqual(job["worker_id"], original)
                     with urlopen(url) as response:
                         self.assertIn(b'<div id="root">', response.read())
                     api.terminate()

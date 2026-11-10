@@ -10,6 +10,50 @@ MIGRATIONS = [
         heartbeat REAL NOT NULL,
         state TEXT NOT NULL CHECK(state IN ('idle', 'stopped'))
     )"""]),
+    (2, [
+        """CREATE TABLE media (
+            id TEXT PRIMARY KEY,
+            request_id TEXT NOT NULL UNIQUE,
+            display_name TEXT NOT NULL,
+            source_path TEXT NOT NULL UNIQUE,
+            playback_path TEXT,
+            media_type TEXT CHECK(media_type IN ('audio', 'video')),
+            duration_ms INTEGER CHECK(duration_ms > 0),
+            size_bytes INTEGER NOT NULL CHECK(size_bytes > 0),
+            created_at INTEGER NOT NULL,
+            lifecycle TEXT NOT NULL DEFAULT 'active'
+                CHECK(lifecycle IN ('active', 'deleting', 'delete_failed'))
+        )""",
+        """CREATE TABLE jobs (
+            queue_order INTEGER PRIMARY KEY AUTOINCREMENT,
+            id TEXT NOT NULL UNIQUE,
+            media_id TEXT NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+            status TEXT NOT NULL CHECK(status IN
+                ('queued', 'running', 'succeeded', 'failed', 'interrupted', 'cancelled')),
+            stage TEXT CHECK(stage IN ('preprocessing', 'transcribing', 'organizing')),
+            attempt INTEGER NOT NULL CHECK(attempt > 0),
+            created_at INTEGER NOT NULL,
+            started_at INTEGER,
+            finished_at INTEGER,
+            worker_id TEXT,
+            heartbeat INTEGER,
+            cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK(cancel_requested IN (0, 1)),
+            error_code TEXT,
+            error_message TEXT,
+            engine TEXT,
+            model TEXT,
+            backend TEXT,
+            processing_version TEXT,
+            parameters_json TEXT,
+            UNIQUE(media_id, attempt),
+            CHECK(status != 'running' OR (worker_id IS NOT NULL AND started_at IS NOT NULL))
+        )""",
+        """CREATE UNIQUE INDEX one_active_job_per_media ON jobs(media_id)
+            WHERE status IN ('queued', 'running')""",
+        "CREATE UNIQUE INDEX one_running_job ON jobs((1)) WHERE status = 'running'",
+        "CREATE INDEX job_fifo ON jobs(queue_order) WHERE status = 'queued'",
+        "CREATE INDEX media_listing ON media(created_at, id)",
+    ]),
 ]
 
 

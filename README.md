@@ -4,6 +4,8 @@
 
 采用 React + TypeScript、FastAPI 和 SQLite，Windows 原生运行。当前提供工程骨架及服务健康页，上传、识别和讲稿阅读尚未实现。
 
+已建立媒体接收登记与队列的数据库事务基础：重复请求ID返回原接收记录、失败/中断任务以新attempt重试、FIFO领取且全局仅一个运行任务。worker取得单实例锁后将上次运行中的任务标记为中断，排队任务保留；单独重启API不影响运行任务。当前尚无上传接口，worker暂不领取任务，等待真实媒体处理器接入。
+
 需要 uv、Node.js（20.19+或22.12+，推荐受支持的LTS）、npm，以及可运行的FFmpeg。Python由uv按 `.python-version` 下载，依赖由 `pyproject.toml` 和 `uv.lock` 管理。
 
 在项目根目录的PowerShell执行：
