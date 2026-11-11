@@ -38,6 +38,8 @@
 
 后端现有Whisper CPU适配与讲稿事务发布基础：校验真实原始片段的时间范围、顺序和文本，完整发布与任务成功在同一事务提交；异常时间戳会拒绝发布。该适配尚未连接运行worker，上传、自动处理及阅读播放界面仍待后续接入。
 
+Whisper外部进程通过Windows Job Object管理整个进程树：创建时即纳入管理，超时、取消或宿主强制退出时终止后代；正常结束也清理遗留后代。输出直接写入本地文件，避免管道阻塞或日志占满内存。需要Windows 10及以上，管理初始化失败会终止本次处理，不降级为无保护执行。此为适配器生命周期基础，尚未接入任务删除和worker自动处理。
+
 前端API类型由FastAPI OpenAPI生成，修改API Schema后运行 `npm --prefix frontend run api:generate`，用 `npm --prefix frontend run api:check` 检查是否过期。导出无需启动服务或创建数据库。生成器使用独立npm工作区锁定openapi-typescript及其TypeScript 5依赖，应用继续使用TypeScript 7；`npm ci`会同时安装两个工作区。
 
 M0样本清点（需要FFmpeg附带的FFprobe，不调用识别模型）：在 `backend` 目录执行：

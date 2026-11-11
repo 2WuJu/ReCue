@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import subprocess
+from app.processes import ProcessCancelled, run_tool
 
 
 class TranscriptionError(ValueError):
@@ -40,11 +41,11 @@ def parse_result(payload, duration_ms):
 
 
 def transcribe(audio: Path, model: Path, executable: Path, output_dir: Path,
-               duration_ms: int, *, timeout=4 * 60 * 60):
+               duration_ms: int, *, timeout=4 * 60 * 60, cancel=None):
     """Run one real file, retaining raw evidence in a new private work directory.
 
-    Not yet connected to the persistent worker: that integration must own process
-    tree lifetime and cancellation before it starts claiming queued media.
+    Not yet connected to the persistent worker. cancel accepts a threading.Event;
+    cancellation, timeout and owner exit terminate the contained process tree.
     """
     validate_segments([], duration_ms)
     for path in (audio, model, executable):
@@ -57,13 +58,14 @@ def transcribe(audio: Path, model: Path, executable: Path, output_dir: Path,
     # No -d truncation: the input file is the exact processing boundary.
     try:
         with (output_dir / "stdout.log").open("xb") as stdout, (output_dir / "stderr.log").open("xb") as stderr:
-            subprocess.run(command, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
-                           check=True, timeout=timeout)
+            run_tool(command, stdout=stdout, stderr=stderr, timeout=timeout, cancel=cancel)
         payload = json.loads(prefix.with_suffix(".json").read_text(encoding="utf-8"))
     except subprocess.TimeoutExpired as exc:
         raise TranscriptionError("Local recognition timed out") from exc
     except subprocess.CalledProcessError as exc:
         raise TranscriptionError("Local recognition process failed; inspect private worker logs") from exc
+    except ProcessCancelled:
+        raise
     except (OSError, ValueError) as exc:
         raise TranscriptionError("Cannot read local recognition output") from exc
     return parse_result(payload, duration_ms)
