@@ -79,11 +79,11 @@ def retry(db_path: Path, media_id: str):
         return _enqueue(db, media_id, job["attempt"] + 1)
 
 
-def claim_next(db_path: Path, worker_id: str):
+def claim_next(db_path: Path, worker_id: str, *, configuration=None):
     """Caller holds worker.lock for the entire processing lifetime.
 
-    A global database constraint also prevents parallel running jobs. No claim is
-    made by the skeleton worker until a real processor is connected.
+    A global database constraint also prevents parallel running jobs. Runtime
+    callers persist the validated deployment configuration with the claim.
     """
     if not worker_id:
         raise ValueError("worker_id is required")
@@ -104,6 +104,12 @@ def claim_next(db_path: Path, worker_id: str):
                worker_id = ?, started_at = ?, heartbeat = ? WHERE id = ?""",
             (worker_id, timestamp, timestamp, job["id"]),
         )
+        if configuration is not None:
+            import json
+            db.execute("""UPDATE jobs SET engine=?, model=?, backend=?, processing_version=?,
+                          parameters_json=? WHERE id=?""",
+                       (configuration["engine"], configuration["model_name"], configuration["backend"],
+                        configuration["processing_version"], json.dumps(configuration), job["id"]))
         return dict(db.execute("SELECT * FROM jobs WHERE id = ?", (job["id"],)).fetchone())
 
 

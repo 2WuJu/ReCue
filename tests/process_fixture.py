@@ -40,10 +40,13 @@ def main():
                         raise AssertionError("Injected failure did not propagate")
             print(json.dumps({"before": before, "after": count()}))
         return
-    if mode == "host":
+    if mode in ("host", "guarded-host"):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
         from app.processes import run_tool
-        with (directory / "out").open("wb") as out, (directory / "err").open("wb") as err:
+        from contextlib import nullcontext
+        from app.worker.containment import containment
+        scope = containment(directory) if mode == "guarded-host" else nullcontext()
+        with scope, (directory / "out").open("wb") as out, (directory / "err").open("wb") as err:
             run_tool([sys.executable, __file__, "root", str(directory)],
                      stdout=out, stderr=err, timeout=60)
         return

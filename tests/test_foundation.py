@@ -31,7 +31,7 @@ class FoundationTests(unittest.TestCase):
                 while True:
                     try:
                         with urlopen(f"http://127.0.0.1:{port}/api/health", timeout=1) as response:
-                            if json.load(response)["worker"]["status"] == "idle":
+                            if json.load(response)["worker"]["status"] == "blocked_config":
                                 break
                     except OSError:
                         pass
@@ -109,7 +109,7 @@ class FoundationTests(unittest.TestCase):
                         with urlopen(url + "/api/health", timeout=1) as response:
                             return json.load(response)
                     health = wait_for(get_health)
-                    self.assertEqual(health["worker"]["status"], "idle")
+                    self.assertEqual(health["worker"]["status"], "blocked_config")
                     self.assertFalse(health["transcription_ready"])
                     self.assertEqual(wait_for(worker_record)["worker_id"], original)
                     with connect(db_path) as db:

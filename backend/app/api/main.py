@@ -86,12 +86,13 @@ def create_app(settings: Settings | None = None):
         age = max(0, time.time() - row["heartbeat"]) if row else None
         state = "offline"
         if row and row["state"] != "stopped" and age < 10:
-            state = "idle"
+            state = row["state"]
         return Health(status="ok", database="ok",
                       worker=WorkerHealth(status=state, heartbeat_age_seconds=age),
                       ffmpeg_available=shutil.which(settings.ffmpeg) is not None,
-                      model_file_available=bool(settings.model_path and settings.model_path.is_file()),
-                      transcription_ready=False)
+                      model_file_available=(state == "processing" or
+                                            bool(settings.model_path and settings.model_path.is_file())),
+                      transcription_ready=state == "processing")
 
     if (settings.frontend_dir / "assets").is_dir():
         app.mount("/assets", StaticFiles(directory=settings.frontend_dir / "assets"), name="assets")

@@ -103,6 +103,40 @@ class ProcessTests(unittest.TestCase):
         host.wait(timeout=10)
         self.assert_exited(handles)
 
+    def test_guardian_drains_before_recovery_after_worker_hard_kill(self):
+        from app.worker.containment import await_cleanup
+        from app.repositories.database import connect, migrate
+        from app.repositories.queue import received, claim_next
+        from app.worker.recovery import interrupt_previous_jobs
+        from app.locking import instance_lock
+        database = self.directory / "recue.sqlite3"
+        migrate(database)
+        received(database, request_id="restart", media_id="restart", display_name="restart.wav",
+                 source_path="media/restart/source", size_bytes=1)
+        claim_next(database, "dead-worker")
+        host = subprocess.Popen([sys.executable, FIXTURE, "guarded-host", str(self.directory)])
+        self.addCleanup(lambda: host.wait(timeout=10))
+        self.addCleanup(lambda: host.kill() if host.poll() is None else None)
+        handles = self.tree_handles()
+        self.assertTrue((self.directory / "processing.guard").exists())
+        host.kill()
+        host.wait(timeout=10)
+        with instance_lock(self.directory / "worker.lock"):
+            await_cleanup(self.directory)
+            # A cleared marker must imply all handles are ALREADY signalled.
+            for handle in handles:
+                self.assertEqual(self.kernel.WaitForSingleObject(handle, 0), 0)
+            self.assertEqual(interrupt_previous_jobs(database), 1)
+        with connect(database) as db:
+            self.assertEqual(db.execute("SELECT status FROM jobs").fetchone()[0], "interrupted")
+
+    def test_unconfirmed_cleanup_blocks_recovery(self):
+        from app.worker.containment import await_cleanup
+        from app.processes import ProcessCleanupError
+        (self.directory / "processing.guard").touch()
+        with self.assertRaises(ProcessCleanupError):
+            await_cleanup(self.directory, timeout=.05)
+
     def test_successful_root_cannot_leave_background_descendants(self):
         thread, errors = self.launch_tree(mode="root-exit", timeout=15)
         handles = self.tree_handles()

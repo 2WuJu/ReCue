@@ -9,6 +9,23 @@ import os
 from pathlib import Path
 import subprocess
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
+
+_outer_job = ContextVar("outer_tool_job", default=None)
+
+
+class ProcessCleanupError(RuntimeError):
+    """Fatal containment failure: callers must stop claiming work."""
+
+
+@contextmanager
+def tool_scope(handle):
+    token = _outer_job.set(handle)
+    try:
+        yield
+    finally:
+        _outer_job.reset(token)
 
 
 class ProcessCancelled(RuntimeError):
@@ -34,7 +51,7 @@ def run_tool(command, *, stdout, stderr, timeout, cancel=None):
     from app._windows_process import ToolJob
 
     deadline = time.monotonic() + timeout
-    with ToolJob(command, stdout, stderr) as job:
+    with ToolJob(command, stdout, stderr, outer_job=_outer_job.get()) as job:
         while True:
             if cancel is not None and cancel.is_set():
                 raise ProcessCancelled("Local processing cancelled")

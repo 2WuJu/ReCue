@@ -3,7 +3,7 @@ from app.repositories.queue import now_ms
 
 
 def interrupt_previous_jobs(db_path):
-    """Only call after acquiring worker.lock, proving the old worker has exited.
+    """Only call after acquiring worker.lock AND awaiting guardian cleanup.
 
     API startup and heartbeat expiry must never call this recovery operation.
     Queued jobs and completed attempts remain untouched.

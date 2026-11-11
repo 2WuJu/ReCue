@@ -2,9 +2,9 @@
 
 个人局域网音视频转写与定位复习工具。
 
-采用 React + TypeScript、FastAPI 和 SQLite，Windows 原生运行。当前提供服务健康页、文件接收/列表/详情/重试API及队列事务基础；上传界面、识别和讲稿阅读尚未实现。
+采用 React + TypeScript、FastAPI 和 SQLite，Windows 原生运行。当前提供服务健康页、文件接收/列表/详情/重试、讲稿与Range播放API，以及配置驱动的单worker真实预处理和识别；上传与讲稿阅读页面仍待实现。
 
-已建立媒体接收登记与队列的数据库事务基础：重复请求ID返回原接收记录、失败/中断任务以新attempt重试、FIFO领取且全局仅一个运行任务。worker取得单实例锁后将上次运行中的任务标记为中断，排队任务保留；单独重启API不影响运行任务。worker暂不领取任务，等待真实媒体处理器接入。
+已建立媒体接收登记与队列的数据库事务基础：重复请求ID返回原接收记录、失败/中断任务以新attempt重试、FIFO领取且全局仅一个运行任务。worker取得单实例锁并确认旧任务整树清理后，将上次运行中的任务标记为中断，排队任务保留；单独重启API不影响运行任务。处理配置完整且校验通过后才自动领取。
 
 需要 uv、Node.js（20.19+或22.12+，推荐受支持的LTS）、npm，以及可运行的FFmpeg。Python由uv按 `.python-version` 下载，依赖由 `pyproject.toml` 和 `uv.lock` 管理。
 
@@ -19,7 +19,7 @@
 
 访问 http://127.0.0.1:4318/ 。首次安装需要网络，依赖准备完成后启动使用uv离线模式。可用 `-Service api` 或 `-Service worker` 分别启停服务；停止时使用与启动相同的参数。
 
-配置来自环境变量：`RECUE_HOST`（默认127.0.0.1）、`RECUE_PORT`（默认4318）、`RECUE_DATA_DIR`（默认项目data目录）、`RECUE_FFMPEG`（默认ffmpeg）、`RECUE_MODEL_PATH`（尚未接入模型）。自定义目录使用绝对路径。当前默认仅监听本机。
+配置来自环境变量：`RECUE_HOST`（默认127.0.0.1）、`RECUE_PORT`（默认4318）、`RECUE_DATA_DIR`（默认项目data目录）、`RECUE_FFMPEG`（默认ffmpeg）、`RECUE_MODEL_PATH`（兼容旧预检，仅检查文件存在）、`RECUE_PROCESSING_CONFIG`（真实处理配置JSON的绝对路径）。自定义目录使用绝对路径。当前默认仅监听本机。
 
 单文件接收契约（也在 `/openapi.json` 中提供）：
 
@@ -34,13 +34,35 @@
 - `GET /api/media?limit=20&cursor=...`：按 `created_at/id` 倒序返回 `items/next_cursor`，limit范围1–100；游标为空表示首屏，`next_cursor=null` 表示没有下一页。刷新首屏可获取新导入的文件。
 - `GET /api/media/{media_id}`：媒体元数据和 `latest_job`，包含真实任务状态、阶段、attempt、错误及处理配置；不返回服务端文件路径。时间均为Unix毫秒，未解析的时长/媒体类型为null，表示尚未验证。
 - `POST /api/media/{media_id}/retry`：仅失败或中断且生命周期active的媒体可重试，创建新attempt后返回201及media_id/job_id；并发重复或状态冲突返回409，媒体不存在404。旧attempt及错误保留。
-- `GET /api/media/{media_id}/transcript`：读取已完整发布的讲稿，包含version及稳定ID、sequence、start_ms、end_ms、text；未发布返回409，媒体不存在返回404。后台自动识别尚未接入，因此正常接收的文件仍会排队，不会自行产生讲稿。
+- `GET /api/media/{media_id}/transcript`：读取已完整发布的讲稿，包含version及稳定ID、sequence、start_ms、end_ms、text；未发布返回409，媒体不存在返回404。仅在完整处理并成功发布后可读。
 
-后端现有Whisper CPU适配与讲稿事务发布基础：校验真实原始片段的时间范围、顺序和文本，完整发布与任务成功在同一事务提交；异常时间戳会拒绝发布。该适配尚未连接运行worker，上传、自动处理及阅读播放界面仍待后续接入。
+后端现有Whisper CPU适配与讲稿事务发布基础：校验真实原始片段的时间范围、顺序和文本，完整发布与任务成功在同一事务提交；异常时间戳会拒绝发布。运行worker按预处理→转写→整理推进阶段，一次事务发布讲稿、播放路径及成功状态；私有中间文件不会被播放API读取。上传与阅读播放界面仍待后续接入。
 
-Whisper外部进程通过Windows Job Object管理整个进程树：创建时即纳入管理，超时、取消或宿主强制退出时终止后代；正常结束也清理遗留后代。输出直接写入本地文件，避免管道阻塞或日志占满内存。需要Windows 10及以上，管理初始化失败会终止本次处理，不降级为无保护执行。此为适配器生命周期基础，尚未接入任务删除和worker自动处理。
+Whisper外部进程通过Windows Job Object管理整个进程树：创建时即纳入管理，超时、取消或宿主强制退出时终止后代；正常结束也清理遗留后代。输出直接写入本地文件，避免管道阻塞或日志占满内存。需要Windows 10及以上，管理初始化失败会终止本次处理，不降级为无保护执行。运行worker另有独立清理守护进程保留外层Job句柄；强退worker后确认整树退出才清除恢复标记，新worker在清理前不恢复、不领取。清理失败保留runtime/processing.guard并阻止启动，错误详见runtime/guardian.log。不要在未核实整树退出时手动删除标记；守护进程异常退出或清理超时需人工检查。取消/媒体删除标记会停止处理并阻止发布；删除接口和文件清理体验仍待实现。
 
-媒体预处理模块现可独立探测和完整解码输入，生成H.264/AAC MP4（纯音频为AAC M4A）及16kHz单声道PCM。音频与视频减去同一个源时间原点，保留音画偏移与时间戳间隙，记录映射及实际解码后的时长；不删除静音、不均分时间。输入限本地媒体格式，拒绝播放列表；超时、取消、损坏或校验失败不返回可发布成果。这仍是后台处理基础，尚未连接自动队列、Range播放或上传/阅读界面；不代表已通过浏览器播放及定位验收。
+媒体预处理模块现可独立探测和完整解码输入，生成H.264/AAC MP4（纯音频为AAC M4A）及16kHz单声道PCM。音频与视频减去同一个源时间原点，保留音画偏移与时间戳间隙，记录映射及实际解码后的时长；不删除静音、不均分时间。输入限本地媒体格式，拒绝播放列表；超时、取消、损坏或校验失败不返回可发布成果。已连接自动队列；播放API使用已发布副本支持Range请求、206及416。上传/阅读界面仍待实现，API字节范围检查不代表已通过浏览器播放及定位验收。
+
+处理配置需显式提供，缺失/无效时health.worker.status为blocked_config，任务保持queued，详细原因在worker输出。修改配置后重启worker；不会自动选择或降级模型。JSON格式如下（路径及校验值替换为实际部署资源）：
+
+```json
+{
+  "version": 1,
+  "backend": "cpu",
+  "engine_version": "已验证版本",
+  "engine_commit": "固定引擎提交号",
+  "model_revision": "固定模型revision",
+  "model_name": "已验证模型名称",
+  "executable": "C:/ReCue/tools/whisper-cli.exe",
+  "executable_sha256": "实际可执行文件SHA-256",
+  "model": "C:/ReCue/models/model.bin",
+  "model_sha256": "实际模型SHA-256",
+  "ffprobe": "ffprobe"
+}
+```
+
+worker启动时校验文件SHA-256、FFmpeg和FFprobe可用性。每次领取保存引擎/模型/后端/固定中文CPU参数及处理版本，预处理完成后追加统一时间轴原点。当前固定8线程、单处理器、不启用VAD和分块。health.transcription_ready仅表示运行worker配置就绪，不是识别质量验收结论。
+
+`GET /api/media/{media_id}/playback`仅提供active且最新任务成功的已发布MP4/M4A；未就绪409、未知媒体404、副本缺失503。支持标准HTTP Range及Content-Type，原文件和任务中间文件不会直接公开。
 
 前端API类型由FastAPI OpenAPI生成，修改API Schema后运行 `npm --prefix frontend run api:generate`，用 `npm --prefix frontend run api:check` 检查是否过期。导出无需启动服务或创建数据库。生成器使用独立npm工作区锁定openapi-typescript及其TypeScript 5依赖，应用继续使用TypeScript 7；`npm ci`会同时安装两个工作区。
 

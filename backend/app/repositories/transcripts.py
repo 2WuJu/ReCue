@@ -7,7 +7,7 @@ from app.transcription.whisper import validate_segments
 
 
 def publish(database, job_id, worker_id, *, duration_ms, media_type, segments,
-            engine, model, processing_version):
+            engine, model, processing_version, playback_path=None):
     validate_segments(segments, duration_ms)
     if media_type not in ("audio", "video"):
         raise ValueError("Invalid media type")
@@ -36,8 +36,8 @@ def publish(database, job_id, worker_id, *, duration_ms, media_type, segments,
             [(str(uuid4()), media_id, index, item["start_ms"], item["end_ms"], item["text"])
              for index, item in enumerate(segments)],
         )
-        db.execute("UPDATE media SET duration_ms=?, media_type=? WHERE id=?",
-                   (duration_ms, media_type, media_id))
+        db.execute("UPDATE media SET duration_ms=?, media_type=?, playback_path=? WHERE id=?",
+                   (duration_ms, media_type, playback_path, media_id))
         db.execute(
             """UPDATE jobs SET status='succeeded', stage='organizing', finished_at=?,
                engine=?, model=?, backend='cpu', processing_version=? WHERE id=?""",

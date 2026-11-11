@@ -44,7 +44,7 @@ def transcribe(audio: Path, model: Path, executable: Path, output_dir: Path,
                duration_ms: int, *, timeout=4 * 60 * 60, cancel=None):
     """Run one real file, retaining raw evidence in a new private work directory.
 
-    Not yet connected to the persistent worker. cancel accepts a threading.Event;
+    cancel accepts a threading.Event;
     cancellation, timeout and owner exit terminate the contained process tree.
     """
     validate_segments([], duration_ms)

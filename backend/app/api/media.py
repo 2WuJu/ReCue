@@ -2,6 +2,7 @@ import base64
 import binascii
 import json
 import sqlite3
+from fastapi.responses import FileResponse
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -114,6 +115,27 @@ def media_router(settings):
         if not item:
             raise ServiceError(404, "media_not_found", "媒体不存在")
         return MediaView.model_validate(item)
+
+    @router.get("/api/media/{media_id}/playback", response_class=FileResponse,
+                responses={206: {"description": "Requested byte range"},
+                           416: {"description": "Unsatisfiable byte range"},
+                           **{code: {"model": ErrorResponse} for code in (404, 409, 503)}})
+    @router.head("/api/media/{media_id}/playback", include_in_schema=False)
+    def playback(media_id: UUID):
+        try:
+            item = get_media(settings.database, str(media_id))
+        except sqlite3.Error as exc:
+            raise storage_error(exc) from exc
+        if not item:
+            raise ServiceError(404, "media_not_found", "媒体不存在")
+        if (item["lifecycle"] != "active" or not item["latest_job"]
+                or item["latest_job"]["status"] != "succeeded" or not item["playback_path"]):
+            raise ServiceError(409, "playback_not_ready", "播放副本尚未就绪", True)
+        path = (settings.data_dir / item["playback_path"]).resolve()
+        if not path.is_relative_to((settings.data_dir / "media").resolve()) or not path.is_file():
+            raise ServiceError(503, "playback_missing", "播放副本不可用，请检查本地存储", True)
+        return FileResponse(path, media_type="video/mp4" if item["media_type"] == "video" else "audio/mp4",
+                            headers={"Cache-Control": "private, no-cache"})
 
     @router.post("/api/media/{media_id}/retry", response_model=RetryReceipt, status_code=201,
                  responses={**errors, **{code: {"model": ErrorResponse} for code in (403, 404, 409)}},

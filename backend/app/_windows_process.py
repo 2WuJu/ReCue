@@ -5,6 +5,7 @@ import msvcrt
 import os
 import subprocess
 import time
+from app.processes import ProcessCleanupError
 
 SIZE = c.c_size_t
 HANDLE = w.HANDLE
@@ -57,6 +58,7 @@ def bind(name, result, *args):
 
 
 create_job = bind("CreateJobObjectW", HANDLE, c.c_void_p, w.LPCWSTR)
+open_job = bind("OpenJobObjectW", HANDLE, w.DWORD, w.BOOL, w.LPCWSTR)
 close = bind("CloseHandle", w.BOOL, HANDLE)
 set_limits = bind("SetInformationJobObject", w.BOOL, HANDLE, c.c_int, c.c_void_p, w.DWORD)
 query = bind("QueryInformationJobObject", w.BOOL, HANDLE, c.c_int, c.c_void_p, w.DWORD, c.c_void_p)
@@ -80,8 +82,24 @@ def checked(result):
     return result
 
 
+def drain_job(handle):
+    try:
+        checked(terminate(handle, 1))
+        deadline = time.monotonic() + 10
+        while True:
+            accounting = Accounting()
+            checked(query(handle, 1, c.byref(accounting), c.sizeof(accounting), None))
+            if not accounting.active:
+                return
+            if time.monotonic() >= deadline:
+                raise RuntimeError("Tool process tree did not exit within 10 seconds")
+            time.sleep(0.01)
+    except Exception as exc:
+        raise ProcessCleanupError("Cannot confirm tool process tree exit") from exc
+
+
 class ToolJob:
-    def __init__(self, command, stdout, stderr):
+    def __init__(self, command, stdout, stderr, outer_job=None):
         self.job = None
         self.process = None
         try:
@@ -89,12 +107,12 @@ class ToolJob:
             limits = ExtendedLimits()
             limits.basic.flags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE; no breakaway
             checked(set_limits(self.job, 9, c.byref(limits), c.sizeof(limits)))
-            self._spawn(command, stdout, stderr)
+            self._spawn(command, stdout, stderr, outer_job)
         except BaseException:
             self.__exit__(None, None, None)
             raise
 
-    def _spawn(self, command, stdout, stderr):
+    def _spawn(self, command, stdout, stderr, outer_job):
         inherited = []
         attributes = None
         initialized = False
@@ -111,7 +129,8 @@ class ToolJob:
             checked(initialize(attributes, 2, 0, c.byref(size)))
             initialized = True
             handles = (HANDLE * 3)(*inherited)
-            jobs = (HANDLE * 1)(self.job)
+            job_handles = [outer_job, self.job] if outer_job else [self.job]
+            jobs = (HANDLE * len(job_handles))(*job_handles)
             checked(update(attributes, 0, 0x20002, handles, c.sizeof(handles), None, None))
             checked(update(attributes, 0, 0x2000D, jobs, c.sizeof(jobs), None, None))
             startup = StartupEx()
@@ -148,18 +167,7 @@ class ToolJob:
     def __exit__(self, *_):
         try:
             if self.job:
-                checked(terminate(self.job, 1))
-                # Termination is asynchronous. Do not release ownership before all
-                # descendants have exited. Failure aborts processing, never succeeds.
-                deadline = time.monotonic() + 10
-                while True:
-                    accounting = Accounting()
-                    checked(query(self.job, 1, c.byref(accounting), c.sizeof(accounting), None))
-                    if not accounting.active:
-                        break
-                    if time.monotonic() >= deadline:
-                        raise RuntimeError("Tool process tree did not exit within 10 seconds")
-                    time.sleep(0.01)
+                drain_job(self.job)
         finally:
             if self.process:
                 close(self.process)

@@ -71,6 +71,16 @@ MIGRATIONS = [
             UNIQUE(media_id, sequence)
         )""",
     ]),
+    (4, [
+        "ALTER TABLE worker_status RENAME TO old_worker_status",
+        """CREATE TABLE worker_status (
+            singleton INTEGER PRIMARY KEY CHECK(singleton=1), worker_id TEXT NOT NULL,
+            pid INTEGER NOT NULL, heartbeat REAL NOT NULL,
+            state TEXT NOT NULL CHECK(state IN ('idle','stopped','blocked_config','processing','error'))
+        )""",
+        "INSERT INTO worker_status SELECT * FROM old_worker_status",
+        "DROP TABLE old_worker_status",
+    ]),
 ]
 
 

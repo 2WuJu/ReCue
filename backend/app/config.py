@@ -13,6 +13,7 @@ class Settings:
     ffmpeg: str
     host: str
     port: int
+    processing_config: Path | None = None
 
     @property
     def database(self) -> Path:
@@ -31,6 +32,8 @@ class Settings:
             os.getenv("RECUE_FFMPEG", "ffmpeg"),
             os.getenv("RECUE_HOST", "127.0.0.1"),
             port,
+            Path(os.environ["RECUE_PROCESSING_CONFIG"]).resolve()
+            if os.getenv("RECUE_PROCESSING_CONFIG") else None,
         )
 
     def prepare(self):
