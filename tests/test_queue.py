@@ -45,7 +45,7 @@ class QueueTests(unittest.TestCase):
         migrate(path)
         with connect(path) as db:
             self.assertEqual(db.execute("SELECT worker_id FROM worker_status").fetchone()[0], "old")
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], MIGRATIONS[-1][0])
             self.assertEqual(db.execute("PRAGMA foreign_key_check").fetchall(), [])
 
     def test_concurrent_receipt_is_atomic_and_idempotent(self):

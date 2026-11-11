@@ -34,8 +34,19 @@
 - `GET /api/media?limit=20&cursor=...`：按 `created_at/id` 倒序返回 `items/next_cursor`，limit范围1–100；游标为空表示首屏，`next_cursor=null` 表示没有下一页。刷新首屏可获取新导入的文件。
 - `GET /api/media/{media_id}`：媒体元数据和 `latest_job`，包含真实任务状态、阶段、attempt、错误及处理配置；不返回服务端文件路径。时间均为Unix毫秒，未解析的时长/媒体类型为null，表示尚未验证。
 - `POST /api/media/{media_id}/retry`：仅失败或中断且生命周期active的媒体可重试，创建新attempt后返回201及media_id/job_id；并发重复或状态冲突返回409，媒体不存在404。旧attempt及错误保留。
+- `GET /api/media/{media_id}/transcript`：读取已完整发布的讲稿，包含version及稳定ID、sequence、start_ms、end_ms、text；未发布返回409，媒体不存在返回404。后台自动识别尚未接入，因此正常接收的文件仍会排队，不会自行产生讲稿。
+
+后端现有Whisper CPU适配与讲稿事务发布基础：校验真实原始片段的时间范围、顺序和文本，完整发布与任务成功在同一事务提交；异常时间戳会拒绝发布。该适配尚未连接运行worker，上传、自动处理及阅读播放界面仍待后续接入。
 
 前端API类型由FastAPI OpenAPI生成，修改API Schema后运行 `npm --prefix frontend run api:generate`，用 `npm --prefix frontend run api:check` 检查是否过期。导出无需启动服务或创建数据库。生成器使用独立npm工作区锁定openapi-typescript及其TypeScript 5依赖，应用继续使用TypeScript 7；`npm ci`会同时安装两个工作区。
+
+M0样本清点（需要FFmpeg附带的FFprobe，不调用识别模型）：在 `backend` 目录执行：
+
+```powershell
+uv run --offline --locked python -m app.media.inspect 'D:\Courses\实际课程.mp4' --output ..\.local\m0\sample.json
+```
+
+输入必须是本地绝对路径；可用 `--ffprobe` 指定探测程序。工具只读源文件，流式计算SHA-256，记录FFprobe版本、音视频流、时长及原始起始时间，不写入业务数据库或队列。省略 `--output` 时输出JSON；报告文件仅允许保存到项目 `.local/`，已有报告不会覆盖。退出码0表示未发现清点问题，2表示报告含无音轨、时长未知或超限等问题，1表示探测或保存失败。清点不执行完整解码、时间轴映射或识别，不能证明媒体完整可处理、质量或性能达标。报告包含本地路径，仅保留本地。
 
 验证（需先完成安装和前端构建）：
 

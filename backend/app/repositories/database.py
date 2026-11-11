@@ -54,6 +54,23 @@ MIGRATIONS = [
         "CREATE INDEX job_fifo ON jobs(queue_order) WHERE status = 'queued'",
         "CREATE INDEX media_listing ON media(created_at, id)",
     ]),
+    (3, [
+        """CREATE TABLE transcripts (
+            media_id TEXT PRIMARY KEY REFERENCES media(id) ON DELETE CASCADE,
+            job_id TEXT NOT NULL UNIQUE REFERENCES jobs(id),
+            version INTEGER NOT NULL CHECK(version > 0),
+            published_at INTEGER NOT NULL
+        )""",
+        """CREATE TABLE transcript_segments (
+            id TEXT PRIMARY KEY,
+            media_id TEXT NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+            sequence INTEGER NOT NULL CHECK(sequence >= 0),
+            start_ms INTEGER NOT NULL CHECK(start_ms >= 0),
+            end_ms INTEGER NOT NULL CHECK(end_ms > start_ms),
+            text TEXT NOT NULL CHECK(length(trim(text)) > 0),
+            UNIQUE(media_id, sequence)
+        )""",
+    ]),
 ]
 
 

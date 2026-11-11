@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from app.api.uploads import ErrorResponse
 from app.errors import ServiceError
 from app.repositories.media import get_media, list_media
+from app.repositories.transcripts import get_transcript
 from app.repositories.queue import MediaNotFound, QueueConflict, retry
 from app.services.uploads import storage_error
 
@@ -50,6 +51,20 @@ class MediaPage(BaseModel):
 class RetryReceipt(BaseModel):
     media_id: UUID
     job_id: UUID
+
+
+class TranscriptSegment(BaseModel):
+    id: UUID
+    sequence: int
+    start_ms: int
+    end_ms: int
+    text: str
+
+
+class Transcript(BaseModel):
+    media_id: UUID
+    version: int
+    segments: list[TranscriptSegment]
 
 
 def encode_cursor(media):
@@ -113,5 +128,19 @@ def media_router(settings):
         except sqlite3.Error as exc:
             raise storage_error(exc) from exc
         return RetryReceipt(media_id=media_id, job_id=job_id)
+
+    @router.get("/api/media/{media_id}/transcript", response_model=Transcript,
+                responses={**errors, **{code: {"model": ErrorResponse} for code in (404, 409)}},
+                summary="读取完整发布讲稿；处理中或尚未发布返回409")
+    def transcript(media_id: UUID):
+        try:
+            result = get_transcript(settings.database, str(media_id))
+        except sqlite3.Error as exc:
+            raise storage_error(exc) from exc
+        if result is None:
+            raise ServiceError(404, "media_not_found", "媒体不存在")
+        if result.get("ready") is False:
+            raise ServiceError(409, "transcript_not_ready", "讲稿尚未发布", True)
+        return Transcript.model_validate(result)
 
     return router
