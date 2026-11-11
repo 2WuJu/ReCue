@@ -40,6 +40,8 @@
 
 Whisper外部进程通过Windows Job Object管理整个进程树：创建时即纳入管理，超时、取消或宿主强制退出时终止后代；正常结束也清理遗留后代。输出直接写入本地文件，避免管道阻塞或日志占满内存。需要Windows 10及以上，管理初始化失败会终止本次处理，不降级为无保护执行。此为适配器生命周期基础，尚未接入任务删除和worker自动处理。
 
+媒体预处理模块现可独立探测和完整解码输入，生成H.264/AAC MP4（纯音频为AAC M4A）及16kHz单声道PCM。音频与视频减去同一个源时间原点，保留音画偏移与时间戳间隙，记录映射及实际解码后的时长；不删除静音、不均分时间。输入限本地媒体格式，拒绝播放列表；超时、取消、损坏或校验失败不返回可发布成果。这仍是后台处理基础，尚未连接自动队列、Range播放或上传/阅读界面；不代表已通过浏览器播放及定位验收。
+
 前端API类型由FastAPI OpenAPI生成，修改API Schema后运行 `npm --prefix frontend run api:generate`，用 `npm --prefix frontend run api:check` 检查是否过期。导出无需启动服务或创建数据库。生成器使用独立npm工作区锁定openapi-typescript及其TypeScript 5依赖，应用继续使用TypeScript 7；`npm ci`会同时安装两个工作区。
 
 M0样本清点（需要FFmpeg附带的FFprobe，不调用识别模型）：在 `backend` 目录执行：

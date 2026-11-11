@@ -1,6 +1,7 @@
 """Real Windows descendants and owner termination, not mocked Popen behavior."""
 import ctypes as c
 from ctypes import wintypes as w
+import json
 from pathlib import Path
 import os
 import subprocess
@@ -149,19 +150,9 @@ class ProcessTests(unittest.TestCase):
         self.assertEqual(list(self.directory.glob("*.pid")), [])
 
     def test_repeated_success_and_setup_failure_release_native_handles(self):
-        from app import _windows_process
-        self.kernel.GetProcessHandleCount.argtypes = [w.HANDLE, c.POINTER(w.DWORD)]
-
-        def count():
-            value = w.DWORD()
-            self.assertTrue(self.kernel.GetProcessHandleCount(_windows_process.current(), c.byref(value)))
-            return value.value
-
-        self.execute(["-c", "pass"], timeout=10)  # Warm up lazy runtime state.
-        before = count()
-        for _ in range(10):
-            self.execute(["-c", "pass"], timeout=10)
-            with patch.object(_windows_process, "update", return_value=0):
-                with self.assertRaises(OSError):
-                    self.execute(["-c", "pass"], timeout=10)
-        self.assertEqual(count(), before)
+        # Isolate from other tests' executor/GC cleanup changing this process's
+        # total handle count while the loop runs (including decreases).
+        result = subprocess.run([sys.executable, FIXTURE, "handle-count", str(self.directory)],
+                                capture_output=True, check=True, timeout=30)
+        counts = json.loads(result.stdout)
+        self.assertEqual(counts["after"], counts["before"])
