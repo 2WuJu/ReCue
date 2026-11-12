@@ -16,7 +16,7 @@ from app.config import Settings
 from app.errors import ServiceError
 from app.repositories.database import connect, migrate
 from app.storage.uploads import recover_uploads
-from app.services.maintenance import maintain_uploads
+from app.services.maintenance import maintain_deletions, maintain_uploads
 
 
 class WorkerHealth(BaseModel):
@@ -43,11 +43,12 @@ def create_app(settings: Settings | None = None):
         await run_in_threadpool(recover_uploads, settings.data_dir, settings.database)
         stop = asyncio.Event()
         maintenance = asyncio.create_task(maintain_uploads(settings, stop))
+        deletions = asyncio.create_task(maintain_deletions(settings, stop))
         try:
             yield
         finally:
             stop.set()
-            await maintenance
+            await asyncio.gather(maintenance, deletions)
 
     # Disable CDN-backed Swagger/ReDoc pages: OpenAPI JSON stays available.
     app = FastAPI(title="ReCue", version="0.1.0", lifespan=lifespan,

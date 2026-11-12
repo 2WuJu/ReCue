@@ -89,6 +89,13 @@ MIGRATIONS = [
             updated_at INTEGER NOT NULL
         )""",
     ]),
+    (6, [
+        "ALTER TABLE media ADD COLUMN delete_error TEXT",
+        """CREATE TABLE deleted_uploads (
+            request_id TEXT PRIMARY KEY,
+            media_id TEXT NOT NULL UNIQUE
+        )""",
+    ]),
 ]
 
 

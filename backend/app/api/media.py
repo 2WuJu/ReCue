@@ -16,6 +16,8 @@ from app.repositories.transcripts import get_transcript
 from app.repositories.progress import progress
 from app.repositories.queue import MediaNotFound, QueueConflict, retry
 from app.services.uploads import storage_error
+from app.services.deletion import request_delete
+from app.locking import AlreadyRunning
 
 
 class JobView(BaseModel):
@@ -42,6 +44,7 @@ class MediaView(BaseModel):
     size_bytes: int
     created_at: int
     lifecycle: Literal["active", "deleting", "delete_failed"]
+    delete_error: str | None
     latest_job: JobView | None
 
 
@@ -126,6 +129,18 @@ def media_router(settings):
         if not item:
             raise ServiceError(404, "media_not_found", "媒体不存在")
         return MediaView.model_validate(item)
+
+    @router.delete("/api/media/{media_id}", response_model=dict[str, str], status_code=202,
+                   responses={code: {"model": ErrorResponse} for code in (403, 422, 503)},
+                   summary="异步删除；重复请求安全，详情404表示清理完成")
+    def delete_media(media_id: UUID):
+        try:
+            request_delete(settings, str(media_id))
+        except AlreadyRunning as exc:
+            raise ServiceError(503, "cleanup_busy", "正在清理文件，请稍后查询或重试删除", True) from exc
+        except (OSError, sqlite3.Error) as exc:
+            raise storage_error(exc) from exc
+        return {"media_id": str(media_id), "status": "deleting"}
 
     @router.get("/api/media/{media_id}/playback", response_class=FileResponse,
                 responses={206: {"description": "Requested byte range"},

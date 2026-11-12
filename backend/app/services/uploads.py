@@ -10,7 +10,7 @@ from starlette.requests import ClientDisconnect, Request
 
 from app.errors import ServiceError
 from app.locking import AlreadyRunning
-from app.repositories.queue import find_receipt, received
+from app.repositories.queue import UploadDeleted, find_receipt, received
 from app.storage.uploads import (
     MAX_UPLOAD_BYTES, flush_file, remove_uncommitted, upload_lock,
 )
@@ -28,6 +28,8 @@ def storage_error(exc):
 def lookup_receipt(database, request_id):
     try:
         return find_receipt(database, request_id)
+    except UploadDeleted as exc:
+        raise ServiceError(410, "upload_deleted", "该上传已删除，请选择文件发起新的上传") from exc
     except sqlite3.Error as exc:
         raise storage_error(exc) from exc
 
@@ -133,6 +135,8 @@ async def receive_upload(request: Request, settings, request_id: str, display_na
                 # Synchronous bounded deletion cannot be cancelled halfway through.
                 if temporary_owned and not finalizing:
                     remove_uncommitted(temporary, source)
+    except UploadDeleted as exc:
+        raise ServiceError(410, "upload_deleted", "该上传已删除，请选择文件发起新的上传") from exc
     except AlreadyRunning as exc:
         raise ServiceError(409, "upload_busy", "已有文件正在接收，请稍后查询请求ID或重试", True) from exc
     except ClientDisconnect as exc:

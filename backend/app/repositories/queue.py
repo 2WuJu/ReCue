@@ -10,6 +10,10 @@ class QueueConflict(Exception):
     """The media lifecycle or current attempt does not allow this operation."""
 
 
+class UploadDeleted(QueueConflict):
+    pass
+
+
 class MediaNotFound(QueueConflict):
     pass
 
@@ -20,6 +24,8 @@ def now_ms():
 
 def find_receipt(db_path: Path, request_id: str):
     with connect(db_path) as db:
+        if db.execute("SELECT 1 FROM deleted_uploads WHERE request_id=?", (request_id,)).fetchone():
+            raise UploadDeleted("Upload was deleted")
         row = db.execute(
             """SELECT media.id AS media_id, jobs.id AS job_id FROM media JOIN jobs
                ON jobs.media_id = media.id AND jobs.attempt = 1 WHERE request_id = ?""",
@@ -48,6 +54,8 @@ def received(db_path: Path, *, request_id: str, media_id: str,
     """
     with connect(db_path) as db, db:
         db.execute("BEGIN IMMEDIATE")
+        if db.execute("SELECT 1 FROM deleted_uploads WHERE request_id=?", (request_id,)).fetchone():
+            raise UploadDeleted("Upload was deleted")
         receipt = db.execute(
             """SELECT media.id AS media_id, jobs.id AS job_id FROM media JOIN jobs
                ON jobs.media_id = media.id AND jobs.attempt = 1 WHERE request_id = ?""",

@@ -23,7 +23,7 @@ class ErrorResponse(BaseModel):
 
 def upload_router(settings):
     router = APIRouter()
-    errors = {code: {"model": ErrorResponse} for code in (400, 403, 408, 409, 413, 415, 422, 503, 507)}
+    errors = {code: {"model": ErrorResponse} for code in (400, 403, 408, 409, 410, 413, 415, 422, 503, 507)}
 
     @router.post("/api/media", response_model=UploadReceipt, status_code=201,
                  responses={**errors, 200: {"model": UploadReceipt}},
@@ -41,7 +41,7 @@ def upload_router(settings):
         return UploadReceipt(request_id=request_id, **receipt)
 
     @router.get("/api/uploads/{request_id}", response_model=UploadReceipt,
-                responses={404: {"model": ErrorResponse}, 422: {"model": ErrorResponse},
+                responses={410: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 422: {"model": ErrorResponse},
                            503: {"model": ErrorResponse}},
                 summary="查询已完成接收的结果；404不代表活跃上传已停止")
     def receipt(request_id: UUID):

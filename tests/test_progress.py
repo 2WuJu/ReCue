@@ -65,6 +65,8 @@ class ProgressHTTPTests(HTTPAPICase):
         self.prepare()
         self.publish()
         with connect(self.database) as db, db:
+            db.execute('DROP TABLE deleted_uploads')
+            db.execute('ALTER TABLE media DROP COLUMN delete_error')
             db.execute('DROP TABLE playback_progress')
             db.execute('PRAGMA user_version=4')
         self.stop()
