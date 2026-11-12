@@ -38,6 +38,10 @@ FFmpeg 生成 H.264/AAC MP4（音频为 AAC M4A）及 16 kHz 单声道 PCM。映
 
 单独重启 API 不影响运行任务。重启 worker 前先确认旧工具进程树清理，再把遗留运行任务标记为 interrupted，排队任务保留；中断任务可手动重试，不承诺从转写中途续算。
 
+`node scripts/recue.mjs stop` 只写停止请求，命令返回不代表服务已经退出。先等启动终端结束，再确认 `runtime/processing.guard` 已由 guardian 清除；异常退出后 guardian 可能还需一段时间。分开启停时分别对原来的 api、worker 启动终端发出停止请求，`--service all` 不会停止分别启动的两个入口。备份前也须停止直接运行的 uvicorn/worker 实例。
+
+`GET /api/health` 的 `status=ok` 表示 API/数据库可用；`worker.status=processing` 和 `transcription_ready=true` 表示处理配置就绪，也可能正在空闲等待队列，不是当前一定有识别任务，更不代表模型质量通过。`offline` 或 `blocked_config` 时不能据 API 可访问判断转写正常。
+
 Windows 工具创建时即纳入 Job Object，超时、取消或宿主退出后清理后代。独立 guardian 保留外层句柄，确认整树退出后才移除 `runtime/processing.guard`。清理失败、guardian 异常退出或断电留下标记时保守阻止启动，错误见 `runtime/guardian.log`；未核实整树退出前不要删除标记。删除运行媒体时先请求取消，工具整树退出后才清理文件；若 worker 异常退出，须在 guardian 确认清理后重启 worker 才能恢复遗留运行状态。
 
 ## 常见问题
@@ -65,3 +69,47 @@ Windows 工具创建时即纳入 Job Object，超时、取消或宿主退出后�
 `DELETE /api/media/{media_id}` 返回 202，表示删除请求已接受，文件可能仍在清理。重复请求安全，包括已不存在的 ID。详情/列表的 lifecycle 为 deleting 或 delete_failed，delete_error 提供清理错误；清理完成后详情返回 404。请求响应丢失时查询列表或安全重试删除。清理忙时可能返回 503，请稍后查询或重试。
 
 删除会保留不含文件名、讲稿和进度的上传 ID 留痕，防止旧请求重放重新创建媒体。对应的上传结果查询和旧 ID 重传返回 410 upload_deleted；若要重新导入，请重新选择文件生成新上传 ID。该查询并非断点续传。
+
+## 停服务备份与恢复
+
+此流程用于同一版本应用的数据恢复。数据库中的媒体路径相对数据目录保存，可以恢复到另一个绝对路径。恢复旧备份会回到备份时的状态，包括之后发生的删除和进度变化；不要把不同时间的数据库与媒体混用，也不要合并覆盖现用数据。
+
+1. 暂停上传，停止所有使用该数据目录的 API/worker，等待启动终端退出及 guardian 清理。确认没有相关服务或工具仍在使用目录，`runtime/processing.guard` 不存在。目录中的 `.lock` 文件可在服务退出后留存，存在本身不表示锁仍被占用；不要靠删除锁文件停止服务。备份期间保持服务停止。
+2. 在 PowerShell 填写真实绝对路径，将整个数据目录复制到**不存在的新目录**。以下命令不下载依赖，不删除源文件；`robocopy` 的返回码 0–7 表示无复制失败，8 以上须检查并保留失败副本，另选新目录重做。
+
+```powershell
+$dataSource = 'C:\ReCue\data'
+$backupTarget = 'E:\ReCueBackups\snapshot-20261113'
+if (!(Test-Path -LiteralPath "$dataSource\recue.sqlite3")) { throw '数据库不存在' }
+if (Test-Path -LiteralPath "$dataSource\runtime\processing.guard") { throw '工具清理尚未确认，停止备份' }
+if (Test-Path -LiteralPath $backupTarget) { throw '请选择不存在的新备份目录' }
+robocopy $dataSource $backupTarget /E /COPY:DAT /DCOPY:DAT /R:0 /W:0 /XJ /XF *.lock
+if ($LASTEXITCODE -ge 8) { throw '备份复制失败，检查输出' }
+```
+
+保留 `recue.sqlite3` 及同目录可能存在的 `recue.sqlite3-wal`、`recue.sqlite3-shm`，并配套复制 `media/`；不要只拷贝主数据库。上述命令同时保留日志与临时目录，排除可重建的锁文件。使用普通本地目录，避免 junction/符号链接；`/XJ` 会跳过 junction，若数据曾被手工迁移为链接，应先核实实体文件，不将跳过的内容视为已备份。另行保管处理 JSON、工具完整目录（含 DLL）、模型及对应哈希、应用版本和锁文件。
+
+3. 保持服务停止，将备份复制到另一个不存在的新目录，再切换 `RECUE_DATA_DIR`，保留原目录以便回退：
+
+```powershell
+$restoreTarget = 'C:\ReCue\restored-data'
+if (Test-Path -LiteralPath $restoreTarget) { throw '请选择不存在的新恢复目录' }
+if (Test-Path -LiteralPath "$backupTarget\runtime\processing.guard") { throw '备份包含未确认的清理标记，不启动' }
+robocopy $backupTarget $restoreTarget /E /COPY:DAT /DCOPY:DAT /R:0 /W:0 /XJ /XF *.lock
+if ($LASTEXITCODE -ge 8) { throw '恢复复制失败，不启动服务' }
+$env:RECUE_DATA_DIR = $restoreTarget
+# 同一启动终端另行设置 RECUE_PROCESSING_CONFIG、RECUE_FFMPEG 等原部署变量
+node scripts/recue.mjs start
+```
+
+4. 查看健康状态、媒体列表及失败/中断记录，打开已完成媒体，核对讲稿、远端播放定位和保存进度。已删除媒体应仍不可见，旧上传 ID 查询应为 410。运行任务在停机后可能恢复为 interrupted，需要手动重试；备份不承诺识别中途续算。复核完成后再接收新上传。回退时先完整停止恢复实例，再把环境变量改回原目录，不能同时启动两份数据处理同一批操作。
+
+## 可信局域网与离线验收准备
+
+在处理电脑的启动终端设置 `$env:RECUE_HOST = '0.0.0.0'`，启动后用 `ipconfig` 查找当前可信网络的 IPv4 地址。第二台电脑访问 `http://处理电脑IPv4:4318/`，无需安装 Python、模型或工具。按 Windows 防火墙提示仅允许可信的专用网络；需要手动规则时，将 TCP 端口限制在本地子网。仓库不自动修改防火墙。
+
+验收时在第二台电脑选择并上传新文件，确认后台完成，再打开讲稿、搜索和点击句子播放；刷新应恢复已保存位置且暂停。记录两端系统/浏览器、访问地址、媒体时长、处理结果和错误。处理电脑自访局域网 IP 不能替代第二台设备。
+
+首次联网准备完依赖后，保留 Node、uv 管理的 Python、项目 `.venv`、`frontend/dist`、FFmpeg/FFprobe、Whisper 完整运行目录与本地模型，配置全部指向本地资源。`setup` 是安装步骤，需要网络，不是离线启动命令；日常使用 `start` 的 `uv --offline --locked`。跨电脑复制 `.venv` 不保证可用，应在目标处理电脑先完成安装。
+
+真实离线验收须阻断互联网且保留两台设备间的局域网（或单独记录本机断网范围），冷启动服务及全新浏览器会话，通过新上传执行识别→讲稿→搜索→播放→进度恢复，记录网络状态和浏览器请求。`uv --offline`、静态资源无 CDN、浏览器模拟离线或已有成果可读都只属于准备检查，不能替代这项验收。目前第二台电脑及真实断网全流程仍未通过。
