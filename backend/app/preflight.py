@@ -17,7 +17,7 @@ def check(require_model=False, check_port=True):
         raise RuntimeError("FFmpeg missing: install FFmpeg or set RECUE_FFMPEG to ffmpeg.exe")
     subprocess.run([executable, "-version"], check=True, capture_output=True, timeout=10)
     if not (settings.frontend_dir / "index.html").is_file():
-        raise RuntimeError("Frontend missing: run scripts/setup.ps1 or npm run build in frontend")
+        raise RuntimeError("Frontend missing: run node scripts/recue.mjs setup or npm run build in frontend")
     model = bool(settings.model_path and settings.model_path.is_file())
     if require_model and not model:
         raise RuntimeError("Model missing: set RECUE_MODEL_PATH to an existing model file (M0 pending)")

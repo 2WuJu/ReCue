@@ -1,4 +1,4 @@
-"""Foreground supervisor used by Windows start/stop scripts."""
+"""Foreground supervisor used by the shared start/stop entry point."""
 import argparse
 import logging
 import signal
@@ -35,7 +35,7 @@ def main():
         try:
             for command in commands:
                 children.append(subprocess.Popen(command))
-            logging.info("Started %s; stop with Ctrl+C or scripts/stop.ps1", args.service)
+            logging.info("Started %s; stop with Ctrl+C or node scripts/recue.mjs stop --service %s", args.service, args.service)
             while not stop.wait(0.5) and not marker.exists():
                 if any(child.poll() is not None for child in children):
                     raise RuntimeError("A service exited unexpectedly; see its output above")

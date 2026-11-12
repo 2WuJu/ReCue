@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "backend": "cpu",
+  "engine_version": "REPLACE_WITH_ACTUAL_VERSION",
+  "engine_commit": "REPLACE_WITH_PINNED_COMMIT",
+  "model_revision": "REPLACE_WITH_PINNED_MODEL_REVISION",
+  "model_name": "REPLACE_WITH_MODEL_NAME",
+  "executable": "C:/ReCue/tools/whisper-cli.exe",
+  "executable_sha256": "REPLACE_WITH_LOWERCASE_SHA256",
+  "model": "C:/ReCue/models/ggml-medium-q5_0.bin",
+  "model_sha256": "REPLACE_WITH_LOWERCASE_SHA256",
+  "ffprobe": "ffprobe"
+}
