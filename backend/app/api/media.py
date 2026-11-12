@@ -7,12 +7,13 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, StrictBool
 
 from app.api.uploads import ErrorResponse
 from app.errors import ServiceError
 from app.repositories.media import get_media, list_media
 from app.repositories.transcripts import get_transcript
+from app.repositories.progress import progress
 from app.repositories.queue import MediaNotFound, QueueConflict, retry
 from app.services.uploads import storage_error
 
@@ -66,6 +67,16 @@ class Transcript(BaseModel):
     media_id: UUID
     version: int
     segments: list[TranscriptSegment]
+
+
+class ProgressUpdate(BaseModel):
+    position_ms: Annotated[int, Field(strict=True, ge=0, le=2**53 - 1)]
+    completed: StrictBool
+
+
+class PlaybackProgress(ProgressUpdate):
+    media_id: UUID
+    updated_at: int | None
 
 
 def encode_cursor(media):
@@ -164,5 +175,27 @@ def media_router(settings):
         if result.get("ready") is False:
             raise ServiceError(409, "transcript_not_ready", "讲稿尚未发布", True)
         return Transcript.model_validate(result)
+
+    def read_or_write_progress(media_id, value=None):
+        try:
+            return progress(settings.database, str(media_id), value)
+        except MediaNotFound as exc:
+            raise ServiceError(404, "media_not_found", "媒体不存在") from exc
+        except QueueConflict as exc:
+            raise ServiceError(409, "progress_not_ready", "当前媒体状态不允许读取或保存进度") from exc
+        except ValueError as exc:
+            raise ServiceError(422, "invalid_progress", "进度须在媒体时长内，已完成进度须位于末尾") from exc
+        except sqlite3.Error as exc:
+            raise storage_error(exc) from exc
+
+    @router.get("/api/media/{media_id}/progress", response_model=PlaybackProgress,
+                responses={code: {"model": ErrorResponse} for code in (404, 409, 422, 503)})
+    def get_progress(media_id: UUID):
+        return read_or_write_progress(media_id)
+
+    @router.put("/api/media/{media_id}/progress", response_model=PlaybackProgress,
+                responses={code: {"model": ErrorResponse} for code in (404, 409, 422, 503)})
+    def put_progress(media_id: UUID, body: ProgressUpdate):
+        return read_or_write_progress(media_id, (body.position_ms, body.completed))
 
     return router

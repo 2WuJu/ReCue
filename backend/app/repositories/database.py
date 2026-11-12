@@ -81,6 +81,14 @@ MIGRATIONS = [
         "INSERT INTO worker_status SELECT * FROM old_worker_status",
         "DROP TABLE old_worker_status",
     ]),
+    (5, [
+        """CREATE TABLE playback_progress (
+            media_id TEXT PRIMARY KEY REFERENCES media(id) ON DELETE CASCADE,
+            position_ms INTEGER NOT NULL CHECK(position_ms >= 0),
+            completed INTEGER NOT NULL CHECK(completed IN (0, 1)),
+            updated_at INTEGER NOT NULL
+        )""",
+    ]),
 ]
 
 

@@ -45,3 +45,4 @@ export function upload(file: File, id: string, progress: (value: number) => void
     xhr.send(file);
   });
 }
+export type Progress = components['schemas']['PlaybackProgress'];
