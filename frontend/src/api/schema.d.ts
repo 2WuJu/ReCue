@@ -1,5 +1,22 @@
 // Generated from FastAPI OpenAPI. Run npm run api:generate; do not edit.
 export interface paths {
+    "/api/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Models */
+        get: operations["models_api_models_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/media": {
         parameters: {
             query?: never;
@@ -189,6 +206,14 @@ export interface components {
             attempt: number;
             /** Created At */
             created_at: number;
+            /** Requested Model */
+            requested_model?: string | null;
+            /** Progress Percent */
+            progress_percent?: number | null;
+            /** Cpu Percent */
+            cpu_percent?: number | null;
+            /** Peak Memory Mib */
+            peak_memory_mib?: number | null;
             /** Started At */
             started_at: number | null;
             /** Finished At */
@@ -354,6 +379,26 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    models_api_models_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string[];
+                };
+            };
+        };
+    };
     listing_api_media_get: {
         parameters: {
             query?: {
@@ -399,6 +444,7 @@ export interface operations {
         parameters: {
             query: {
                 display_name: string;
+                model?: string | null;
             };
             header: {
                 "X-Upload-ID": string;

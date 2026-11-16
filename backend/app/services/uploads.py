@@ -8,6 +8,7 @@ from anyio import CancelScope
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect, Request
 
+from app.worker.configuration import configured_models
 from app.errors import ServiceError
 from app.locking import AlreadyRunning
 from app.repositories.queue import UploadDeleted, find_receipt, received
@@ -34,7 +35,7 @@ def lookup_receipt(database, request_id):
         raise storage_error(exc) from exc
 
 
-def finalize_upload(settings, temporary, source, request_id, media_id, display_name, total):
+def finalize_upload(settings, temporary, source, request_id, media_id, display_name, total, model=None):
     committed = False
     source_owned = False
     try:
@@ -44,7 +45,7 @@ def finalize_upload(settings, temporary, source, request_id, media_id, display_n
         receipt = received(
             settings.database, request_id=request_id, media_id=media_id,
             display_name=display_name, source_path=source.relative_to(settings.data_dir).as_posix(),
-            size_bytes=total,
+            size_bytes=total, requested_model=model,
         )
         committed = receipt["media_id"] == media_id
         return receipt, committed
@@ -75,7 +76,7 @@ async def finish_before_cancelling(function, *args):
 
 
 async def receive_upload(request: Request, settings, request_id: str, display_name: str,
-                         *, max_bytes=MAX_UPLOAD_BYTES, idle_timeout=60):
+                         *, model=None, max_bytes=MAX_UPLOAD_BYTES, idle_timeout=60):
     # Replays never consume the body or create a second file/job.
     receipt = await run_in_threadpool(lookup_receipt, settings.database, request_id)
     if receipt:
@@ -99,6 +100,8 @@ async def receive_upload(request: Request, settings, request_id: str, display_na
             receipt = await run_in_threadpool(lookup_receipt, settings.database, request_id)
             if receipt:
                 return receipt, False
+            if model is not None and model not in await run_in_threadpool(configured_models, settings):
+                raise ServiceError(422, "invalid_model", "所选模型不可用，请刷新后重新选择")
             media_id = str(uuid4())
             temporary = settings.data_dir / "tmp" / f"{media_id}.part"
             source = settings.data_dir / "media" / media_id / "source"
@@ -128,7 +131,7 @@ async def receive_upload(request: Request, settings, request_id: str, display_na
                 with CancelScope(shield=True):
                     return await finish_before_cancelling(
                         finalize_upload, settings, temporary, source,
-                        request_id, media_id, display_name, total,
+                        request_id, media_id, display_name, total, model,
                     )
             finally:
                 # Cleanup stays inside the lock, including cancellation/disconnect paths.

@@ -32,7 +32,7 @@ class ProcessCancelled(RuntimeError):
     pass
 
 
-def run_tool(command, *, stdout, stderr, timeout, cancel=None):
+def run_tool(command, *, stdout, stderr, timeout, cancel=None, report=None):
     """Run an argument array with file-backed output, never a shell or a pipe.
 
     cancel is an optional threading.Event. Return only after the entire job is
@@ -52,7 +52,14 @@ def run_tool(command, *, stdout, stderr, timeout, cancel=None):
 
     deadline = time.monotonic() + timeout
     with ToolJob(command, stdout, stderr, outer_job=_outer_job.get()) as job:
+        sampled_at, previous_cpu = time.monotonic(), 0
         while True:
+            now = time.monotonic()
+            if report and now - sampled_at >= 1:
+                cpu_seconds, peak_memory = job.resources()
+                percent = 100 * (cpu_seconds - previous_cpu) / ((now - sampled_at) * (os.cpu_count() or 1))
+                report(min(100, max(0, percent)), peak_memory)
+                sampled_at, previous_cpu = now, cpu_seconds
             if cancel is not None and cancel.is_set():
                 raise ProcessCancelled("Local processing cancelled")
             if time.monotonic() >= deadline:

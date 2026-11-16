@@ -34,18 +34,18 @@ def find_receipt(db_path: Path, request_id: str):
         return dict(row) if row else None
 
 
-def _enqueue(db, media_id, attempt):
+def _enqueue(db, media_id, attempt, requested_model=None):
     job_id = str(uuid4())
     db.execute(
-        """INSERT INTO jobs(id, media_id, status, attempt, created_at)
-           VALUES (?, ?, 'queued', ?, ?)""",
-        (job_id, media_id, attempt, now_ms()),
+        """INSERT INTO jobs(id, media_id, status, attempt, created_at, requested_model)
+           VALUES (?, ?, 'queued', ?, ?, ?)""",
+        (job_id, media_id, attempt, now_ms(), requested_model),
     )
     return job_id
 
 
 def received(db_path: Path, *, request_id: str, media_id: str,
-             display_name: str, source_path: str, size_bytes: int):
+             display_name: str, source_path: str, size_bytes: int, requested_model=None):
     """Register a fully received file and its first job, or return the original receipt.
 
     Internal storage boundary: caller must persist the file first, use server-owned
@@ -68,7 +68,7 @@ def received(db_path: Path, *, request_id: str, media_id: str,
                VALUES (?, ?, ?, ?, ?, ?)""",
             (media_id, request_id, display_name, source_path, size_bytes, now_ms()),
         )
-        return {"media_id": media_id, "job_id": _enqueue(db, media_id, 1)}
+        return {"media_id": media_id, "job_id": _enqueue(db, media_id, 1, requested_model)}
 
 
 def retry(db_path: Path, media_id: str):
@@ -84,7 +84,7 @@ def retry(db_path: Path, media_id: str):
             "failed", "interrupted",
         ):
             raise QueueConflict("Only failed/interrupted active media can be retried")
-        return _enqueue(db, media_id, job["attempt"] + 1)
+        return _enqueue(db, media_id, job["attempt"] + 1, job["requested_model"])
 
 
 def claim_next(db_path: Path, worker_id: str, *, configuration=None):

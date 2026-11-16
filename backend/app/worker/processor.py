@@ -1,6 +1,8 @@
 """One owned attempt: private artifacts first, one atomic publication last."""
 import json
 import threading
+import re
+from app.worker.configuration import select_model
 
 from app.media.prepare import PreparationError, prepare
 from app.processes import ProcessCancelled
@@ -55,13 +57,29 @@ def process_attempt(settings, config, job, stop):
         source = (settings.data_dir / row["source_path"]).resolve()
         source.relative_to(settings.data_dir / "media")
         work = settings.data_dir / "media" / job["media_id"] / "attempts" / job["id"]
+        config = select_model(config, job.get("requested_model"))
+        with connect(database) as db, db:
+            db.execute("UPDATE jobs SET model=?, parameters_json=? WHERE id=? AND worker_id=?",
+                       (config.snapshot["model_name"], json.dumps(config.snapshot), job["id"], owner))
         stage("preprocessing")
         prepared = prepare(source, work / "prepared", ffmpeg=config.ffmpeg,
                            ffprobe=config.ffprobe, cancel=cancel)
         snapshot = {**config.snapshot, "source_origin_seconds": prepared.source_origin_seconds}
         stage("transcribing", snapshot)
+
+        def report(cpu, peak_memory):
+            log = work / "recognition" / "stderr.log"
+            with log.open("rb") as stream:
+                stream.seek(max(0, log.stat().st_size - 4096))
+                matches = re.findall(rb"progress\s*=\s*(\d{1,3})%", stream.read())
+            percent = min(100, int(matches[-1])) if matches else None
+            with connect(database) as db, db:
+                db.execute("""UPDATE jobs SET progress_percent=coalesce(?,progress_percent),
+                    cpu_percent=?, peak_memory_mib=? WHERE id=? AND worker_id=? AND status='running'""",
+                           (percent, cpu, peak_memory, job["id"], owner))
+
         segments = transcribe(prepared.audio, config.model, config.executable, work / "recognition",
-                              prepared.duration_ms, cancel=cancel)
+                              prepared.duration_ms, cancel=cancel, report=report)
         stage("organizing")
         publish(database, job["id"], owner, duration_ms=prepared.duration_ms,
                 media_type=prepared.media_type, segments=segments, engine="whisper.cpp",

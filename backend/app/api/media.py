@@ -26,6 +26,10 @@ class JobView(BaseModel):
     stage: Literal["preprocessing", "transcribing", "organizing"] | None
     attempt: int
     created_at: int
+    requested_model: str | None = None
+    progress_percent: int | None = None
+    cpu_percent: float | None = None
+    peak_memory_mib: float | None = None
     started_at: int | None
     finished_at: int | None
     error_code: str | None

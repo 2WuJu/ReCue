@@ -112,6 +112,13 @@ class ToolJob:
             self.__exit__(None, None, None)
             raise
 
+    def resources(self):
+        accounting, limits = Accounting(), ExtendedLimits()
+        checked(query(self.job, 1, c.byref(accounting), c.sizeof(accounting), None))
+        checked(query(self.job, 9, c.byref(limits), c.sizeof(limits), None))
+        return ((accounting.user_time + accounting.kernel_time) / 10_000_000,
+                limits.peak_job_memory / 1024**2)
+
     def _spawn(self, command, stdout, stderr, outer_job):
         inherited = []
         attributes = None

@@ -41,7 +41,7 @@ def parse_result(payload, duration_ms):
 
 
 def transcribe(audio: Path, model: Path, executable: Path, output_dir: Path,
-               duration_ms: int, *, timeout=4 * 60 * 60, cancel=None):
+               duration_ms: int, *, timeout=4 * 60 * 60, cancel=None, report=None):
     """Run one real file, retaining raw evidence in a new private work directory.
 
     cancel accepts a threading.Event;
@@ -54,11 +54,11 @@ def transcribe(audio: Path, model: Path, executable: Path, output_dir: Path,
     output_dir.mkdir(parents=True, exist_ok=False)
     prefix = output_dir / "result"
     command = [str(executable), "-m", str(model), "-f", str(audio), "-l", "zh",
-               "-t", "8", "-p", "1", "-ng", "-oj", "-of", str(prefix)]
+               "-t", "8", "-p", "1", "-ng", "-pp", "-oj", "-of", str(prefix)]
     # No -d truncation: the input file is the exact processing boundary.
     try:
         with (output_dir / "stdout.log").open("xb") as stdout, (output_dir / "stderr.log").open("xb") as stderr:
-            run_tool(command, stdout=stdout, stderr=stderr, timeout=timeout, cancel=cancel)
+            run_tool(command, stdout=stdout, stderr=stderr, timeout=timeout, cancel=cancel, report=report)
         payload = json.loads(prefix.with_suffix(".json").read_text(encoding="utf-8"))
     except subprocess.TimeoutExpired as exc:
         raise TranscriptionError("Local recognition timed out") from exc

@@ -27,10 +27,10 @@ export function uploadId() {
   const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
-export function upload(file: File, id: string, progress: (value: number) => void): Promise<Receipt> {
+export function upload(file: File, id: string, progress: (value: number) => void, model = ''): Promise<Receipt> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', `/api/media?display_name=${encodeURIComponent(file.name)}`);
+    xhr.open('POST', `/api/media?display_name=${encodeURIComponent(file.name)}${model ? `&model=${encodeURIComponent(model)}` : ''}`);
     xhr.setRequestHeader('X-Upload-ID', id);
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
     xhr.upload.onprogress = e => { if (e.lengthComputable) progress(Math.floor(e.loaded / e.total * 100)); };

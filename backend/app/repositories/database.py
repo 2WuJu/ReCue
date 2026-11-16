@@ -96,6 +96,12 @@ MIGRATIONS = [
             media_id TEXT NOT NULL UNIQUE
         )""",
     ]),
+    (7, [
+        "ALTER TABLE jobs ADD COLUMN requested_model TEXT",
+        "ALTER TABLE jobs ADD COLUMN progress_percent INTEGER",
+        "ALTER TABLE jobs ADD COLUMN cpu_percent REAL",
+        "ALTER TABLE jobs ADD COLUMN peak_memory_mib REAL",
+    ]),
 ]
 
 

@@ -3,6 +3,7 @@ import { formatTime, message, request, type Media, type Transcript, type Progres
 import { activeSegment, searchTranscript, connectProgressWriter } from './model';
 
 export function Reader({ mediaId }: { mediaId: string }) {
+  const [wide, setWide] = useState(false);
   const [data, setData] = useState<{ media: Media; transcript: Transcript; progress: Progress } | null>(null);
   const [error, setError] = useState(''), [playError, setPlayError] = useState(''), [saveError, setSaveError] = useState('');
   const [revision, setRevision] = useState(0), [ready, setReady] = useState(false);
@@ -102,9 +103,9 @@ export function Reader({ mediaId }: { mediaId: string }) {
     });
   }
   return <><div className="reader-head"><a className="back" href="#" aria-label="返回媒体列表">←</a><h1 title={data?.media.display_name}>{data?.media.display_name ?? '讲稿阅读'}</h1></div>
-    {error ? <div className="error" role="alert">媒体、讲稿或进度加载失败：{error} <button onClick={() => setRevision(n => n + 1)}>重新加载</button></div> : !data ? <div className="empty">正在加载媒体、讲稿和进度…</div> : <div className="split"><section className="player-panel" aria-label="媒体播放">
+    {error ? <div className="error" role="alert">媒体、讲稿或进度加载失败：{error} <button onClick={() => setRevision(n => n + 1)}>重新加载</button></div> : !data ? <div className="empty">正在加载媒体、讲稿和进度…</div> : <div className={wide ? "split wide-video" : "split"}><section className="player-panel" aria-label="媒体播放">
       {data.media.media_type === 'audio' ? <audio {...props} ref={el => { player.current = el; }} /> : <video {...props} ref={el => { player.current = el; }} />}
-      <div className="player-options"><label>播放速度 <select aria-label="播放速度" defaultValue="1" onChange={event => { if (player.current) player.current.playbackRate = Number(event.target.value); }}>{[0.5, 0.75, 1, 1.25, 1.5, 2].map(rate => <option key={rate} value={rate}>{rate}×</option>)}</select></label><span className="muted">{formatTime(data.media.duration_ms)}</span></div>
+      <div className="player-options">{data.media.media_type === 'video' && <button className="video-size" aria-pressed={wide} onClick={() => setWide(!wide)}>{wide ? '标准视图' : '宽屏视图'}</button>}<label>播放速度 <select aria-label="播放速度" defaultValue="1" onChange={event => { if (player.current) player.current.playbackRate = Number(event.target.value); }}>{[0.5, 0.75, 1, 1.25, 1.5, 2].map(rate => <option key={rate} value={rate}>{rate}×</option>)}</select></label><span className="muted">{formatTime(data.media.duration_ms)}</span></div>
       {completed && <div className="completion">已播放完成 <button disabled={!ready} onClick={() => { if (player.current) { player.current.currentTime = 0; void player.current.play().catch(() => setPlayError('未能自动播放，请点击播放器的播放按钮。')); setCompleted(false); } }}>从头播放</button></div>}
       {saveError && <p className="error" role="alert">{saveError} <button onClick={() => save.current?.()}>重试保存</button></p>}
       {playError && <p className="error" role="alert">{playError} <button onClick={() => { setPlayError(''); player.current?.load(); }}>重新加载播放器</button></p>}

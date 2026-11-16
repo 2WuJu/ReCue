@@ -15,6 +15,34 @@ class ProcessingConfig:
     snapshot: dict
 
 
+def available_models(default):
+    return {path.name: path for path in [*sorted(default.parent.glob("ggml-*.bin")), default]
+            if path.is_file() and path.resolve().parent == default.resolve().parent}
+
+
+def configured_models(settings):
+    if not settings.processing_config:
+        return []
+    try:
+        default = Path(json.loads(settings.processing_config.read_text(encoding="utf-8"))["model"])
+        return list(available_models(default)) if default.is_absolute() else []
+    except (OSError, ValueError, TypeError, KeyError):
+        return []
+
+
+def select_model(config, name):
+    if not name or name == config.model.name:
+        return config
+    path = available_models(config.model).get(name)
+    if path is None:
+        raise ValueError("Selected model is unavailable")
+    with path.open("rb") as stream:
+        digest = hashlib.file_digest(stream, "sha256").hexdigest()
+    snapshot = {**config.snapshot, "model": str(path), "model_sha256": digest,
+                "model_name": name, "model_revision": "unrecorded"}
+    return ProcessingConfig(config.executable, path, config.ffmpeg, config.ffprobe, snapshot)
+
+
 def load_processing(settings):
     if settings.processing_config is None:
         raise ValueError("Set RECUE_PROCESSING_CONFIG to a local processing JSON file")

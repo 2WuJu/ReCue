@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Header, Query, Request, Response
 from pydantic import BaseModel
 
+from app.worker.configuration import configured_models
 from app.errors import ServiceError
 from app.services.uploads import lookup_receipt, receive_upload
 
@@ -25,6 +26,10 @@ def upload_router(settings):
     router = APIRouter()
     errors = {code: {"model": ErrorResponse} for code in (400, 403, 408, 409, 410, 413, 415, 422, 503, 507)}
 
+    @router.get("/api/models", response_model=list[str])
+    def models():
+        return configured_models(settings)
+
     @router.post("/api/media", response_model=UploadReceipt, status_code=201,
                  responses={**errors, 200: {"model": UploadReceipt}},
                  summary="接收单文件并入队；不表示媒体校验或识别通过",
@@ -33,10 +38,11 @@ def upload_router(settings):
                  }}})
     async def upload(request: Request, response: Response,
                      request_id: Annotated[UUID, Header(alias="X-Upload-ID")],
-                     display_name: Annotated[str, Query(min_length=1, max_length=255)]):
+                     display_name: Annotated[str, Query(min_length=1, max_length=255)],
+                     model: str | None = None):
         if not display_name.strip() or any(ord(char) < 32 for char in display_name):
             raise ServiceError(422, "invalid_display_name", "文件名不能为空或包含控制字符")
-        receipt, created = await receive_upload(request, settings, str(request_id), display_name)
+        receipt, created = await receive_upload(request, settings, str(request_id), display_name, model=model)
         response.status_code = 201 if created else 200
         return UploadReceipt(request_id=request_id, **receipt)
 

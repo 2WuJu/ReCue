@@ -1,6 +1,8 @@
 """Streaming/storage checks use arbitrary bytes, never simulated ASR results."""
 import asyncio
 import errno
+import json
+from dataclasses import replace
 import os
 from pathlib import Path
 import socket
@@ -23,7 +25,7 @@ from app.config import Settings
 from app.errors import ServiceError
 from app.locking import AlreadyRunning
 from app.repositories.database import connect, migrate
-from app.repositories.queue import find_receipt, received
+from app.repositories.queue import find_receipt, received, retry
 from app.services.uploads import receive_upload
 from app.storage.uploads import recover_uploads, upload_lock
 
@@ -51,6 +53,28 @@ class StorageTests(unittest.IsolatedAsyncioTestCase):
         with connect(self.settings.database) as db:
             self.assertEqual(db.execute("SELECT count(*) FROM media").fetchone()[0], 0)
             self.assertEqual(db.execute("SELECT count(*) FROM jobs").fetchone()[0], 0)
+
+    async def test_model_selection_survives_retry_and_receipt_replay(self):
+        model = self.data / "ggml-test.bin"
+        model.touch()
+        config = self.data / "processing.json"
+        config.write_text(json.dumps({"model": str(model)}), encoding="utf-8")
+        settings = replace(self.settings, processing_config=config)
+        request_id = str(uuid4())
+        body = [{"type": "http.request", "body": b"media"}]
+        with self.assertRaises(ServiceError) as error:
+            await receive_upload(self.request(body), settings, request_id, "clip", model="../outside.bin")
+        self.assertEqual(error.exception.code, "invalid_model")
+        self.assert_empty()
+        receipt, _ = await receive_upload(self.request(body), settings, request_id, "clip", model=model.name)
+        with connect(settings.database) as db, db:
+            db.execute("UPDATE jobs SET status='failed' WHERE id=?", (receipt["job_id"],))
+        retry(settings.database, receipt["media_id"])
+        with connect(settings.database) as db:
+            self.assertEqual([r[0] for r in db.execute("SELECT requested_model FROM jobs")], [model.name] * 2)
+        model.unlink()
+        self.assertEqual(await receive_upload(self.request([]), settings, request_id, "clip", model=model.name),
+                         (receipt, False))
 
     async def test_stream_writes_before_eof_and_memory_does_not_scale_with_file(self):
         request_id = str(uuid4())

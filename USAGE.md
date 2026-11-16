@@ -45,7 +45,9 @@ sequenceDiagram
 
 双击项目根目录的 `Start.cmd`，或在终端运行 `node scripts/recue.mjs launch`。第一次输入 whisper-cli.exe 和多语言 GGML 模型的路径后，脚本将绝对路径和 SHA-256 保存到 `processing.local.json`，随后启动网页和后台进程。再次启动会复用该文件。
 
-更换工具或模型时，先停止服务，将旧配置改名保存，再运行启动脚本重新选择。已设置 `RECUE_PROCESSING_CONFIG` 时，启动脚本优先使用它指定的配置。需要记录发布版本、源码 commit 或模型 revision 时，可按[配置示例](examples/processing.example.json)补充；问答生成的配置将这些来源字段标记为 `unrecorded`。
+上传前可从「转写模型」选择默认模型或同目录下的其他多语言 `ggml-*.bin`。本次选择应用于整批文件，失败重试沿用所选模型。服务端接收文件后，上传条目会在对应媒体出现在列表时收起。列表中的「已用」和「总耗时」从本次任务入队开始计算，包含排队时间；重试从新任务入队重新计时。识别时列表显示引擎上报的进度、处理电脑上识别进程树占整机的 CPU 百分比和峰值提交内存。桌面阅读页可点击「宽屏视图」放大视频并保留讲稿。
+
+更换默认工具或模型时，先停止服务，将旧配置改名保存，再运行启动脚本重新选择。已设置 `RECUE_PROCESSING_CONFIG` 时，启动脚本优先使用它指定的配置。需要记录发布版本、源码 commit 或模型 revision 时，可按[配置示例](examples/processing.example.json)补充；问答生成的配置将这些来源字段标记为 `unrecorded`。
 
 ## 上传与接收
 
