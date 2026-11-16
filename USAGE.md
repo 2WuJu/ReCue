@@ -2,6 +2,51 @@
 
 返回 [README](README.md)。本文件描述当前已实现接口，完整 Schema 由运行服务的 `/openapi.json` 提供。
 
+```mermaid
+sequenceDiagram
+    participant UI as 客户端 · 浏览器
+    participant API as 服务端 · FastAPI
+    UI->>API: 上传文件 POST /api/media
+    API-->>UI: 返回媒体 ID，任务已入队
+    UI->>API: 刷新媒体列表 GET /api/media
+    API-->>UI: 返回最新处理阶段
+    opt 任务完成后打开阅读页
+        UI->>API: 并行读取媒体详情、讲稿和播放进度
+        API-->>UI: 返回媒体信息、讲稿片段和已保存位置
+        UI->>API: GET /api/media/{id}/playback
+        API-->>UI: 返回媒体数据，支持按字节范围读取
+        UI->>UI: 点击句子，按时间戳定位播放
+        UI->>API: PUT /api/media/{id}/progress 保存位置
+    end
+```
+
+后台领取任务、处理音轨和发布讲稿的步骤见[完整流程图](README.md#一段录音如何变成可点击的讲稿)。安装步骤见[首次启动](README.md#首次启动)。队列停住时见[常见问题](#常见问题)。
+
+## 部署配置参考
+
+配置通过启动终端的环境变量传入，当前不自动读取 `.env` 文件。
+
+| 环境变量 | 默认值 | 用途 |
+| --- | --- | --- |
+| `RECUE_HOST` | `127.0.0.1` | API 监听地址 |
+| `RECUE_PORT` | `4318` | API 端口 |
+| `RECUE_DATA_DIR` | 项目下 `data/` | 数据库、原文件、播放副本与运行记录；自定义时须用绝对路径 |
+| `RECUE_FFMPEG` | `ffmpeg` | FFmpeg 命令或绝对路径；FFprobe 在处理 JSON 中设置 |
+| `RECUE_PROCESSING_CONFIG` | 未设置 | 处理 JSON 的绝对路径，交互启动时自动设置 |
+| `RECUE_MODEL_PATH` | 未设置 | 旧预检兼容项，仅检查文件存在，不能替代处理 JSON |
+
+开发中使用过 whisper.cpp `b5454` 与 `medium-q5_0`，仅为可运行基线，不作为质量推荐。工具、模型、本地配置和数据不进入 Git；请记录实际固定版本、下载来源和文件哈希。依赖与模型准备后，启动使用 `uv --offline --locked`，前端无 CDN；整机断网后的完整流程尚待验收。
+
+支持 `--service api` 或 `--service worker` 分开启停；使用同一数据目录并以相同参数停止各自入口。
+
+依赖完整性检查：`uv lock --check --offline`、`uv pip check`。其余开发检查见 README。
+
+### 准备转写配置
+
+双击项目根目录的 `Start.cmd`，或在终端运行 `node scripts/recue.mjs launch`。第一次输入 whisper-cli.exe 和多语言 GGML 模型的路径后，脚本将绝对路径和 SHA-256 保存到 `processing.local.json`，随后启动网页和后台进程。再次启动会复用该文件。
+
+更换工具或模型时，先停止服务，将旧配置改名保存，再运行启动脚本重新选择。已设置 `RECUE_PROCESSING_CONFIG` 时，启动脚本优先使用它指定的配置。需要记录发布版本、源码 commit 或模型 revision 时，可按[配置示例](examples/processing.example.json)补充；问答生成的配置将这些来源字段标记为 `unrecorded`。
+
 ## 上传与接收
 
 - `POST /api/media?display_name=URL编码文件名`：请求头 `X-Upload-ID` 为客户端生成的 UUID，`Content-Type: application/octet-stream`，请求体为原始字节，不使用 multipart。
@@ -97,16 +142,15 @@ if (Test-Path -LiteralPath $restoreTarget) { throw '请选择不存在的新恢�
 if (Test-Path -LiteralPath "$backupTarget\runtime\processing.guard") { throw '备份包含未确认的清理标记，不启动' }
 robocopy $backupTarget $restoreTarget /E /COPY:DAT /DCOPY:DAT /R:0 /W:0 /XJ /XF *.lock
 if ($LASTEXITCODE -ge 8) { throw '恢复复制失败，不启动服务' }
-$env:RECUE_DATA_DIR = $restoreTarget
-# 同一启动终端另行设置 RECUE_PROCESSING_CONFIG、RECUE_FFMPEG 等原部署变量
-node scripts/recue.mjs start
+
+
 ```
 
-4. 查看健康状态、媒体列表及失败/中断记录，打开已完成媒体，核对讲稿、远端播放定位和保存进度。已删除媒体应仍不可见，旧上传 ID 查询应为 410。运行任务在停机后可能恢复为 interrupted，需要手动重试；备份不承诺识别中途续算。复核完成后再接收新上传。回退时先完整停止恢复实例，再把环境变量改回原目录，不能同时启动两份数据处理同一批操作。
+4. 在 Git Bash 运行 `RECUE_DATA_DIR=C:/ReCue/restored-data bash scripts/start.sh`（替换为实际恢复目录并沿用原部署配置）。查看健康状态、媒体列表及失败/中断记录，打开已完成媒体，核对讲稿、远端播放定位和保存进度。已删除媒体应仍不可见，旧上传 ID 查询应为 410。运行任务在停机后可能恢复为 interrupted，需要手动重试；备份不承诺识别中途续算。复核完成后再接收新上传。回退时先完整停止恢复实例，再把环境变量改回原目录，不能同时启动两份数据处理同一批操作。
 
 ## 可信局域网与离线验收准备
 
-在处理电脑的启动终端设置 `$env:RECUE_HOST = '0.0.0.0'`，启动后用 `ipconfig` 查找当前可信网络的 IPv4 地址。第二台电脑访问 `http://处理电脑IPv4:4318/`，无需安装 Python、模型或工具。按 Windows 防火墙提示仅允许可信的专用网络；需要手动规则时，将 TCP 端口限制在本地子网。仓库不自动修改防火墙。
+在处理电脑的 Bash 启动终端设置 `export RECUE_HOST=0.0.0.0`，启动后用 `ipconfig` 查找当前可信网络的 IPv4 地址。第二台电脑访问 `http://处理电脑IPv4:4318/`，无需安装 Python、模型或工具。按 Windows 防火墙提示仅允许可信的专用网络；需要手动规则时，将 TCP 端口限制在本地子网。仓库不自动修改防火墙。
 
 验收时在第二台电脑选择并上传新文件，确认后台完成，再打开讲稿、搜索和点击句子播放；刷新应恢复已保存位置且暂停。记录两端系统/浏览器、访问地址、媒体时长、处理结果和错误。处理电脑自访局域网 IP 不能替代第二台设备。
 

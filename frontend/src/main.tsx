@@ -20,6 +20,6 @@ function App() {
     void refresh();
     return () => { disposed = true; clearTimeout(timer); window.removeEventListener('hashchange', change); };
   }, []);
-  return <><header className="nav"><a href="#" className="brand">ReCue</a><span className={health?.transcription_ready ? 'connection' : 'muted'} role="status">{health ? health.transcription_ready ? '● 服务就绪' : '● 服务在线 · 后台处理未就绪' : '○ 连接中断 · 正在重连'}</span></header><main><div hidden={!!id}><Library /></div>{id && <Reader key={id} mediaId={id} />}</main></>;
+  return <><header className="nav"><a href="#" className="brand">ReCue</a><span className={health?.transcription_ready ? 'connection' : 'muted'} role="status">{health ? health.transcription_ready ? '● 转写服务就绪' : '● 服务在线 · 后台处理未就绪' : '○ 连接中断 · 正在重连'}</span></header><main><div hidden={!!id}><Library health={health} /></div>{id && <Reader key={id} mediaId={id} />}</main></>;
 }
 createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>);

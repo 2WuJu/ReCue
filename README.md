@@ -1,155 +1,118 @@
 # ReCue
 
-把本地音视频变成可点击定位的讲稿，方便回看课程、核对原话和复习。
+**上传本地音视频，生成可点击定位的讲稿。** 用来回看课程、搜索原话、边听边复习。
 
-ReCue 是面向个人及可信局域网的自托管工具。媒体、讲稿和识别计算保留在处理电脑，浏览器负责上传、播放和阅读。采用 React + TypeScript、FastAPI、SQLite 与 whisper.cpp CPU 转写。
+媒体、讲稿和识别计算都留在你的电脑上，浏览器负责操作。当前为 **0.1 开发版，完整转写需要 Windows 10+**。
 
-> **开发中（0.1）**：上传 → 转写 → 播放阅读的核心流程已接通；搜索、播放高亮、跟随与进度恢复已接通；删除确认、任务取消与异步清理已接通。当前完整转写服务需要 Windows 10+。
+## 从上传到阅读
 
-## 界面预览
+![在播放器旁搜索讲稿，点击句子即可跳到原声](assets/screenshots/reader-desktop.jpg)
 
-以下为当前版本的真实界面，使用自制演示媒体和预置示例讲稿，不包含私人课程；示例任务状态与讲稿仅用于界面展示，不作为转写质量或处理能力的验收证据。
+每批最多上传 5 个文件。处理完成后，点击「阅读」即可搜索原话、点击句子播放。下次打开时会恢复播放位置。截图使用演示媒体和预置讲稿。
 
-**媒体列表**：查看排队、完成和失败状态，打开讲稿或重试失败任务。
+## 一段录音如何变成可点击的讲稿
 
-![ReCue 媒体列表：示例视频、音频、排队与失败任务](assets/screenshots/library.jpg)
+假设你上传了 `课程录音.m4a`，想重听老师在第 12 秒讲的那句话。从上往下看，每一步都发生在对应的一列里。
 
-**桌面阅读**：播放器与讲稿并排，支持倍速与点击句子定位。
+```mermaid
+sequenceDiagram
+    box 客户端
+        participant B as 浏览器
+    end
+    box 服务端（处理电脑）
+        participant A as 网页服务
+        participant S as 本地存储
+        participant W as 转写进程
+    end
+    Note over B,W: ① 上传录音
+    B->>A: 上传课程录音.m4a
+    A->>S: 保存原文件，在 SQLite 中登记排队任务
+    A-->>B: 201 已接收，返回媒体 ID 和任务 ID
+    Note over B,W: ② 后台生成讲稿
+    W->>S: 领取队首任务，读取原文件
+    W->>W: FFmpeg 生成识别音轨和播放副本
+    W->>W: whisper.cpp 识别语音，生成带时间戳的片段
+    W->>S: 发布讲稿和播放路径，将任务标记为已完成
+    Note over B,W: ③ 打开讲稿，听到原句
+    B->>A: 刷新媒体列表
+    A-->>B: 录音已完成，可以阅读
+    B->>A: 打开阅读页，读取媒体信息、讲稿和上次进度
+    A-->>B: 返回阅读数据，含每句话的起止时间
+    B->>A: 播放器请求播放副本
+    A-->>B: 返回媒体数据
+    B->>B: 点击 00:12 的句子，从 00:11.700 开始播放
+```
 
-![ReCue 桌面阅读：左侧播放器与右侧可点击讲稿](assets/screenshots/reader-desktop.jpg)
+上传请求在「已接收」时结束。此后转写进程独立工作，媒体列表会定时查询进度。点击句子时，浏览器用讲稿时间戳定位，提前 0.3 秒起播，方便听清句首。
 
-<details>
-<summary>窄屏阅读预览</summary>
+## 首次启动
 
-播放器与讲稿在窄屏上下排列。
+在 Windows 10 或更新版本上准备以下工具。
 
-<img src="assets/screenshots/reader-mobile.jpg" alt="ReCue 窄屏阅读：上方播放器与下方讲稿" width="390" />
-
-</details>
-
-## 功能与路线图
-
-| 状态 | 功能 |
+| 准备什么 | 要求 |
 | --- | --- |
-| 已实现 | 每批选择 1–5 个文件，串行流式上传、逐文件进度和接收结果查询 |
-| 已实现 | 媒体列表、分页、状态筛选、后台单任务队列、失败/中断重试 |
-| 已实现 | FFmpeg 校验和预处理、本地 Whisper CPU 转写、讲稿完整发布 |
-| 已实现 | 同屏音视频与讲稿、原生播放控制和倍速、点击句首提前 0.3 秒播放 |
-| 已实现 | 已发布播放副本的 HTTP Range 读取、进程树保护与中断恢复基础 |
-| 已实现 | 完整讲稿关键词搜索、按位置计数与命中导航、当前句高亮、手动阅读暂停跟随 |
-| 已实现 | 服务端保存播放进度、重开暂停恢复、完成标记与从头播放 |
-| 媒体删除 | 确认后撤销排队/取消运行任务，异步清理；文件占用或权限失败可重试删除 |
-| 待验收 | 识别质量和句首精度、60 分钟稳定性、不同内容的 5 文件组合、第二台电脑与完整离线流程 |
+| [Node.js 与 npm](https://nodejs.org/)、[uv](https://docs.astral.sh/uv/getting-started/installation/) | Node 20.19+ 或 22.12+，uv 管理 Python |
+| [FFmpeg 与 FFprobe](https://ffmpeg.org/download.html) | 两者都加入 PATH，FFmpeg 支持 libx264 和 AAC |
+| [whisper.cpp](https://github.com/ggml-org/whisper.cpp) | Windows 版 whisper-cli.exe 和配套 DLL，以及一个支持中文的多语言 GGML 模型 |
 
-当前转写固定中文、CPU、8 线程，不启用 VAD 或分块；模型仍是实验基线，尚未完成最终选型。工程上限为单文件 4 GiB、120 分钟，这些上限不代表已通过同规模实测。MKV、MP4、MP3、WAV 等本地文件是否可处理取决于实际编码、音轨及完整解码结果，不保证所有格式组合。
+1. **双击项目根目录的 `Start.cmd`**。首次启动会联网安装项目依赖并构建网页。
+2. 按提示输入 **whisper-cli.exe 路径**和**模型文件路径**。脚本计算哈希、保存配置，然后启动服务。
+3. 打开[本机首页](http://127.0.0.1:4318/)，看到「转写服务就绪」即可上传。使用期间保持启动窗口打开。
 
-## 环境要求
+以后双击同一个文件即可复用配置。在命令提示符、PowerShell 或 Bash 中，也可以从项目根目录运行 `node scripts/recue.mjs launch`。原有的 `bash scripts/start.sh` 继续可用。
 
-- [Node.js](https://nodejs.org/) 与 npm：20.19+ 或 22.12+（建议使用受支持的 LTS）。
-- [uv](https://docs.astral.sh/uv/getting-started/installation/)：统一管理 Python 和后端依赖，无需自行激活虚拟环境。Python 版本见 `.python-version`。
-- [FFmpeg 与 FFprobe](https://ffmpeg.org/download.html)：加入 PATH，FFmpeg 构建需包含 `libx264` 与 AAC 编码器。
-- 转写另需自行准备 [whisper.cpp](https://github.com/ggml-org/whisper.cpp) 的 `whisper-cli` 和兼容的多语言 GGML 模型；仓库不附带可执行工具或权重。
+## 上传了，为什么没有讲稿？
 
-| 平台 | 安装/启动脚本 | API 与界面 | 自动转写 |
-| --- | --- | --- | --- |
-| Windows 10+ | 统一 Node.js 入口；保留 PowerShell 兼容入口 | 已验证 | 已验证核心流程 |
-| macOS / Linux | 使用相同 Node.js 命令；尚未实机验证 | 可用于开发，尚未实机验收 | 暂不支持；依赖 Windows Job Object，入口会明确拒绝启动 worker |
+「已接收待处理」只代表文件已保存。**在下方媒体列表看处理状态**：
 
-## 快速开始
+| 看到的状态 | 接下来做什么 |
+| --- | --- |
+| 转写配置缺失或无效 / `blocked_config` | 查看启动终端的具体校验错误，按[配置说明](USAGE.md#准备转写配置)更新工具和模型路径，再停止并重启。已有排队文件会继续处理，无需重传 |
+| 转写进程未运行或已失联 / `offline` | 查看启动终端，确认启动的是完整服务；`start --service api` 只启动网页，无法转写 |
+| 排队中，且转写服务就绪 | 前面的任务正在处理；当前一次只处理一个文件 |
+| 预处理中 / 转写中 / 整理中 | 等待完成；页面显示阶段与耗时，没有估算百分比。CPU 转写可能较慢 |
+| 失败 / 中断 | 查看列表里的错误详情，排除问题后点击「重试」 |
+| 已完成 | 点击这一行的「阅读」，进入播放器与讲稿 |
 
-下载或克隆本仓库，在项目根目录打开终端。首次安装需要网络：
+上传完成前请保持页面打开；已接收后可关闭浏览器，后台继续处理。若显示「结果待查询」，先点击「查询结果」，避免重复上传。
 
-```sh
-node scripts/recue.mjs setup
+需要检查服务状态时，在另一终端运行：
+
+```bash
+curl http://127.0.0.1:4318/api/health
 ```
 
-该命令按锁文件安装 Python/npm 依赖并构建前端，不自动下载 FFmpeg、Whisper 或模型。
+`transcription_ready: true` 才表示转写配置就绪；`status: ok` 只表示网页 API 和数据库可用。
 
-### 1. 配置本地转写（Windows）
+## 停止与数据
 
-1. 准备 `whisper-cli.exe` 和多语言 GGML 模型。开发中使用过 whisper.cpp `b5454` 与 `medium-q5_0`，仅作为可运行基线，并非质量推荐。
-2. 复制 [处理配置示例](examples/processing.example.json) 为 `processing.local.json`，填写真实绝对路径、引擎版本/commit、模型 revision 和 SHA-256。
-3. 设置配置路径后启动（PowerShell）：
+在启动终端按 `Ctrl+C`，或另开终端运行并等待启动终端退出：
 
-```powershell
-Get-FileHash 'C:/ReCue/tools/whisper-cli.exe' -Algorithm SHA256
-Get-FileHash 'C:/ReCue/models/ggml-medium-q5_0.bin' -Algorithm SHA256
-# 将哈希以小写写入 JSON 对应字段，并填写其他部署信息
-$env:RECUE_PROCESSING_CONFIG = (Resolve-Path ./processing.local.json).Path
-node scripts/recue.mjs start
-```
-
-工具和模型获取方式见 whisper.cpp 官方说明；记录所下载/构建的实际固定版本和来源，不要把示例占位符当作可用配置。修改配置后须重启 worker。配置缺失或无效时，worker 显示 `blocked_config`，上传仍可接收，任务保持排队；不会自动选择或降级模型。
-
-### 2. 打开与使用
-
-访问 [本机首页](http://127.0.0.1:4318/)，上传文件并等待处理完成。点击「阅读」查看播放器与完整讲稿，点击讲稿定位播放。播放位置保存在服务端，重新打开阅读页时恢复并保持暂停。
-
-上传后可关闭浏览器，后台继续处理。上传过程中请保持页面打开；响应不明时先「查询结果」。不支持断点续传，刷新页面会丢失当前页面的上传查询入口，请先检查媒体列表。
-
-macOS/Linux 仅启动 API 与界面用于开发：
-
-```sh
-node scripts/recue.mjs start --service api
-```
-
-### 3. 停止服务
-
-在启动终端按 `Ctrl+C`，或在另一终端运行：
-
-```sh
+```bash
 node scripts/recue.mjs stop
 ```
 
-可使用 `--service api` 或 `--service worker` 分开启停；停止时必须使用与启动相同的 `--service` 和 `RECUE_DATA_DIR`，并等待启动终端退出。Windows 旧入口 `scripts/setup.ps1`、`start.ps1`、`stop.ps1` 仍可使用，服务参数仍为 `-Service`。
+默认所有数据保存在项目的 `data/` 下。更换数据目录或分开启停服务时，停止命令必须使用与启动相同的 `RECUE_DATA_DIR` 和 `--service`。
 
-## 配置与数据
+当前没有登录或访问控制，只适合本机或个人可信局域网，**不要开放公网**。局域网访问、备份恢复、环境变量和 API 见 [详细使用说明](USAGE.md)。
 
-配置通过启动终端的环境变量传入；当前不自动读取 `.env` 文件。
+## 当前边界与开发
 
-| 环境变量 | 默认值 | 用途 |
-| --- | --- | --- |
-| `RECUE_HOST` | `127.0.0.1` | API 监听地址 |
-| `RECUE_PORT` | `4318` | API 端口 |
-| `RECUE_DATA_DIR` | 项目下 `data/` | 数据库、原文件、播放副本与运行记录；自定义时须用绝对路径 |
-| `RECUE_FFMPEG` | `ffmpeg` | FFmpeg 命令或绝对路径；FFprobe 在处理 JSON 中设置 |
-| `RECUE_PROCESSING_CONFIG` | 未设置 | 处理 JSON 的绝对路径 |
-| `RECUE_MODEL_PATH` | 未设置 | 旧预检兼容项，仅检查文件存在，不能替代处理 JSON |
+支持本地音视频上传、后台转写、讲稿搜索、点击定位、播放跟随、进度恢复与媒体删除。工程上限为单文件 4 GiB、120 分钟，实际可处理格式取决于编码和音轨。识别质量、句首精度、单文件 60 分钟、不同内容的 5 文件组合、第二台电脑及完整离线流程仍待验收。
 
-默认仅本机访问。可信局域网使用时设置 `RECUE_HOST=0.0.0.0`，按需放行防火墙，再通过处理电脑的局域网 IP 和端口访问。**当前没有登录或访问控制，请仅用于个人可信网络，不开放公网。** 第二台电脑访问尚未完成实机验收。
+macOS/Linux 目前仅能用 `node scripts/recue.mjs start --service api` 开发 API 与界面，自动转写暂不支持。
 
-数据保存在 `data/`，依赖、模型及本地配置不进入 Git。备份应在停止 API/worker 并确认工具清理完成后配套复制数据库及媒体，配置和模型另行保管。停服务备份与恢复命令见 [使用说明](USAGE.md#停服务备份与恢复)。若出现 `runtime/processing.guard` 清理阻塞，先检查 `runtime/guardian.log`；未确认整棵工具进程树退出时不要手动删除标记。
+开发目录：`frontend/src/` 为 React + TypeScript 界面，`backend/app/` 为 API 与处理逻辑，`scripts/` 为启动入口，`tests/` 为后端测试。修改后可运行：
 
-依赖和模型就绪后，启动使用 `uv --offline --locked`，前端不使用 CDN；整机断网后的完整产品流程尚待验收。
-
-## 开发与验证
-
-```sh
-uv lock --check --offline
-uv pip check
+```bash
 uv run --offline --locked python -m unittest discover -s tests -v
+node --test frontend/tests/library.test.mjs
 npm --prefix frontend run api:check
 npm --prefix frontend run build
 ```
 
-修改 API Schema 后运行 `npm --prefix frontend run api:generate` 更新前端类型。应用与类型生成工具使用独立 TypeScript 工作区，依赖版本由锁文件管理。
-
-```text
-backend/app/      API、存储、队列、预处理与转写
-frontend/src/     媒体列表、阅读播放器与生成的 API 类型
-scripts/          通用安装/启动/停止入口与 PowerShell 兼容入口
-examples/         可公开的部署配置示例
-tests/           后端与启动流程测试
-```
-
-详细接口、错误和恢复规则见 [使用与 API 参考](USAGE.md)。
-
-## 帮助与贡献
-
-由 ReCue 维护者与贡献者维护。欢迎通过本仓库 Issues 报告问题、提出建议，通过 Pull Request 贡献改进。报告时请附系统、依赖版本、复现步骤和脱敏错误；不要上传课程原文、讲稿、模型或包含个人路径的日志。提交代码前运行相关验证，API 变更需同步生成类型。
+API Schema 有改动时运行 `npm --prefix frontend run api:generate`。欢迎通过 Issues 或 Pull Request 反馈与贡献；请附系统、版本、复现步骤和脱敏错误，不要上传私人媒体、讲稿或模型。
 
 ## 许可证
 
-本项目源码采用 [MIT License](LICENSE)。允许个人使用、修改、商用与再分发；在软件副本或实质性部分中须保留版权声明和许可声明，无需强制公开修改后的源码。
-
-此许可不要求在每个界面或广告中展示项目名称。模型权重、FFmpeg、whisper.cpp 和其他第三方依赖各自遵循原许可，不因被本项目调用而改用 MIT。
+源码采用 [MIT License](LICENSE)，允许个人使用、修改、商用与再分发，须保留版权及许可声明。模型权重、FFmpeg、whisper.cpp 等第三方依赖遵循各自许可。

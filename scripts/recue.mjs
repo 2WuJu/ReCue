@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Shared entry point: no shell-specific environment activation or global Python.
+import { configureProcessing } from './configure.mjs';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -9,9 +10,10 @@ import { parseArgs } from 'node:util';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const windows = process.platform === 'win32';
-const usage = `Usage: node scripts/recue.mjs <setup|start|stop> [--service all|api|worker]
+const usage = `Usage: node scripts/recue.mjs <setup|launch|start|stop> [--service all|api|worker]
 
 setup   Install locked Python/npm dependencies and build the frontend (network required).
+launch  Configure local transcription interactively and start services.
 start   Run in the foreground using uv --offline --locked (default service: all).
 stop    Request shutdown; use the same --service and RECUE_DATA_DIR as start.
 
@@ -69,7 +71,7 @@ async function main() {
   });
   if (values.help) return console.log(usage);
   const [action] = positionals;
-  if (positionals.length !== 1 || !['setup', 'start', 'stop'].includes(action)) throw new Error(usage);
+  if (positionals.length !== 1 || !['setup', 'launch', 'start', 'stop'].includes(action)) throw new Error(usage);
   const service = values.service ?? 'all';
   if (!['all', 'api', 'worker'].includes(service)) throw new Error('Service must be all, api or worker.');
   if (action === 'setup' && values.service) throw new Error('setup does not accept --service.');
@@ -82,23 +84,24 @@ async function main() {
     console.log(`Stop requested for launcher '${service}'; wait for the start terminal to exit.`);
   };
   if (action === 'stop') return requestStop();
-  if (action === 'start' && !windows && service !== 'api') {
+  if (action !== 'setup' && !windows && service !== 'api') {
     throw new Error('Transcription requires Windows 10+ (Job Object containment). Use start --service api for API/UI development on this platform.');
   }
   const uv = await uvCommand();
-  if (action === 'setup') {
+  const python = join(root, '.venv', windows ? 'Scripts/python.exe' : 'bin/python');
+  const needsSetup = !existsSync(python) || !existsSync(join(root, 'frontend', 'dist', 'index.html'));
+  if (action === 'setup' || (action === 'launch' && needsSetup)) {
     await run(uv, ['python', 'install']);
     await run(uv, ['sync', '--locked']);
     await npm(['ci']);
     await npm(['run', 'build']);
-    console.log('Setup complete. Run: node scripts/recue.mjs start');
-  } else {
-    const python = join(root, '.venv', windows ? 'Scripts/python.exe' : 'bin/python');
-    if (!existsSync(python)) throw new Error('Python environment missing. Run node scripts/recue.mjs setup first.');
-    mkdirSync(runtime, { recursive: true });
-    await run(uv, ['run', '--offline', '--locked', 'python', '-m', 'app.run', '--service', service],
-      join(root, 'backend'), requestStop);
+    if (action === 'setup') return console.log('Setup complete. Run: node scripts/recue.mjs launch');
   }
+  if (!existsSync(python)) throw new Error('Python environment missing. Run node scripts/recue.mjs setup first.');
+  if (action === 'launch' && service !== 'api') await configureProcessing(root);
+  mkdirSync(runtime, { recursive: true });
+  await run(uv, ['run', '--offline', '--locked', 'python', '-m', 'app.run', '--service', service],
+    join(root, 'backend'), requestStop);
 }
 
 main().catch(error => {

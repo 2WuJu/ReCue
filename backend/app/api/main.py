@@ -103,7 +103,7 @@ def create_app(settings: Settings | None = None):
         page = settings.frontend_dir / "index.html"
         if not page.is_file():
             return JSONResponse(status_code=503, content={
-                "code": "frontend_missing", "message": "请先运行 scripts/setup.ps1 构建前端", "retryable": False,
+                "code": "frontend_missing", "message": "请先运行 node scripts/recue.mjs setup 构建前端", "retryable": False,
             })
         return FileResponse(page, headers={"Cache-Control": "no-cache"})
 
