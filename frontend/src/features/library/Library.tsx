@@ -135,8 +135,9 @@ export function Library({ health }: { health: Health | null }) {
     <h2 id="delete-title">删除这段媒体？</h2><p className="delete-name">{deleting?.display_name}</p>
     <p id="delete-description">只删除 ReCue 媒体库中的上传副本、播放副本、讲稿和阅读进度，删除后无法恢复。你电脑上用于上传的源文件会保留。运行中的任务会先停止。</p>
     <div className="modal-actions"><button autoFocus disabled={!!busy} onClick={() => setDeleting(null)}>取消</button><button className="danger" disabled={!!busy} onClick={() => void remove()}>{busy ? '正在请求…' : '确认删除'}</button></div>
-  </dialog><div className="title"><h1>媒体</h1><div className="upload-tools"><button className="primary" disabled={uploading} onClick={() => input.current?.click()}>↑ 上传</button><label className="model-choice">转写模型 <select disabled={uploading} value={model} onChange={e => setModel(e.target.value)}><option value="">服务端默认</option>{models.map(name => <option key={name}>{name}</option>)}</select></label></div>
+  </dialog><div className="title"><h1>媒体</h1><div className="upload-tools"><button className="primary" disabled={uploading} onClick={() => input.current?.click()}>↑ 上传音视频</button></div>
     <input ref={input} type="file" multiple hidden accept="audio/*,video/*,.mkv,.mov" onChange={event => void select(event.target.files)} /></div>
+    <details className="processing-settings"><summary>转写设置</summary><p className="muted">上传后自动生成讲稿。此设置仅用于后续上传，已有媒体及重试仍沿用原模型。</p><label className="model-choice">转写模型 <select disabled={uploading} value={model} onChange={e => setModel(e.target.value)}><option value="">服务端默认</option>{models.map(name => <option key={name}>{name}</option>)}</select></label></details>
     <p className="workflow">上传音视频 → 等待转写 → 点击「阅读」。完成后可播放媒体、搜索讲稿，点击句子定位播放。</p>
     {health && !health.transcription_ready && <section className="processing-notice" role="status" aria-label="转写服务状态">
       <h2>{health.worker.status === 'blocked_config' ? '转写配置缺失或无效' : health.worker.status === 'offline' ? '转写进程未运行或已失联' : '转写服务尚未就绪'}</h2>

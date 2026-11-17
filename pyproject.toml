@@ -5,6 +5,7 @@ description = "Local audio/video transcription and review"
 requires-python = "==3.13.*"
 dependencies = [
     "fastapi==0.162.3",
+    "sherpa-onnx==2.0.1",
     "uvicorn==0.54.0",
 ]
 

@@ -18,6 +18,7 @@ from app.repositories.queue import MediaNotFound, QueueConflict, retry
 from app.services.uploads import storage_error
 from app.services.deletion import request_delete
 from app.locking import AlreadyRunning
+from app.services.article import ArticleFormatter
 
 
 class JobView(BaseModel):
@@ -76,6 +77,20 @@ class Transcript(BaseModel):
     segments: list[TranscriptSegment]
 
 
+class ArticlePart(BaseModel):
+    segment: int
+    start: int
+    end: int
+    suffix: str
+
+
+class Article(BaseModel):
+    media_id: UUID
+    version: int
+    model: str
+    paragraphs: list[list[ArticlePart]]
+
+
 class ProgressUpdate(BaseModel):
     position_ms: Annotated[int, Field(strict=True, ge=0, le=2**53 - 1)]
     completed: StrictBool
@@ -109,6 +124,7 @@ def decode_cursor(cursor):
 
 def media_router(settings):
     router = APIRouter()
+    articles = ArticleFormatter(settings)
     errors = {code: {"model": ErrorResponse} for code in (422, 503)}
 
     @router.get("/api/media", response_model=MediaPage, responses=errors,
@@ -194,6 +210,15 @@ def media_router(settings):
         if result.get("ready") is False:
             raise ServiceError(409, "transcript_not_ready", "讲稿尚未发布", True)
         return Transcript.model_validate(result)
+
+    @router.post("/api/media/{media_id}/article", response_model=Article,
+                 responses={code: {"model": ErrorResponse} for code in (404, 409, 503)},
+                 summary="使用本地标点模型整理文字稿；保留原文和时间轴，缓存完整结果")
+    def article(media_id: UUID):
+        try:
+            return articles.create(str(media_id))
+        except (OSError, sqlite3.Error) as exc:
+            raise storage_error(exc) from exc
 
     def read_or_write_progress(media_id, value=None):
         try:

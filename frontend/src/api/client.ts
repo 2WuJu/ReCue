@@ -46,3 +46,5 @@ export function upload(file: File, id: string, progress: (value: number) => void
   });
 }
 export type Progress = components['schemas']['PlaybackProgress'];
+
+export type Article = components['schemas']['Article'];
