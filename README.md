@@ -33,7 +33,7 @@ sequenceDiagram
     Note over B,W: ② 后台生成讲稿
     W->>S: 领取队首任务，读取原文件
     W->>W: FFmpeg 生成识别音轨和播放副本
-    W->>W: whisper.cpp 识别语音，生成带时间戳的片段
+    W->>W: Whisper 或 Qwen3-ASR 在本地生成带时间戳的讲稿片段
     W->>S: 发布讲稿和播放路径，将任务标记为已完成
     Note over B,W: ③ 打开讲稿，听到原句
     B->>A: 刷新媒体列表
@@ -72,7 +72,7 @@ command -v whisper-cli
 bash scripts/start.sh
 ```
 
-按提示填写 `command -v whisper-cli` 输出的路径。使用其他来源的原生二进制时，把 `ffmpeg` 和 `ffprobe` 放在 PATH 中，并确认 FFmpeg 提供 `libx264` 和 AAC 编码器。macOS 与 Windows 均使用 Whisper CPU 后端。
+按提示填写 `command -v whisper-cli` 输出的路径。使用其他来源的原生二进制时，把 `ffmpeg` 和 `ffprobe` 放在 PATH 中，并确认 FFmpeg 提供 `libx264` 和 AAC 编码器。默认配置使用 Whisper CPU。也可以[配置 Qwen3-ASR CPU](USAGE.md#配置-qwen3-asr)，并在上传前通过「转写设置」按批选择模型。
 
 ## 上传了，为什么没有讲稿？
 

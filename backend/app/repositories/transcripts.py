@@ -3,7 +3,7 @@ from uuid import uuid4
 
 from app.repositories.database import connect
 from app.repositories.queue import QueueConflict, now_ms
-from app.transcription.whisper import validate_segments
+from app.transcription.segments import validate_segments
 
 
 def publish(database, job_id, worker_id, *, duration_ms, media_type, segments,

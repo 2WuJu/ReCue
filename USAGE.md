@@ -45,7 +45,7 @@ sequenceDiagram
 
 Windows 可双击项目根目录的 `Start.cmd`，macOS 可在项目根目录运行 `bash scripts/start.sh`。两个平台也可运行 `node scripts/recue.mjs launch`。第一次输入 whisper-cli 和多语言 GGML 模型的路径后，脚本将绝对路径和 SHA-256 保存到 `processing.local.json`，随后启动网页和后台进程。再次启动会复用该文件。将项目从 Windows 迁到 macOS 时，按当前电脑上的路径重新生成处理配置。
 
-上传前可展开「转写设置」，查看处理电脑上的模型、可用状态和原因。转写进程会发现默认模型及同目录的 `ggml-*.bin`，并在空闲时检查新增或更换的文件。无法加载、仅支持英语或验证超时的权重会给出对应状态。短测基于一秒静音，内存估算用于帮助选择模型。对于参考数据不足的模型，列表可显示「资源需求未知」。
+上传前可展开「转写设置」，查看处理电脑上的模型、可用状态和原因。转写进程会发现默认模型及其同目录的 Whisper `ggml-*.bin`，并在空闲时验证已发现或手动登记的模型。无法加载、仅支持英语或验证超时的权重会给出对应状态。短测基于一秒静音，内存估算用于帮助选择模型。对于参考数据不足的模型，列表可显示「资源需求未知」。
 
 服务端会在领取任务前重查当前内存余量。低于推荐余量时可以尝试，明显不足时暂停领取该模型的任务。已排队任务会显示等待原因，恢复后自动继续。也可先在「转写设置」里选可用模型，再对受阻任务点击「改用所选模型」。普通重试仍沿用原任务模型。
 
@@ -58,11 +58,40 @@ uv run --offline --locked python -m app.model_commands disable ggml-large-v3-q5_
 uv run --offline --locked python -m app.model_commands enable ggml-large-v3-q5_0.bin
 ```
 
-`add` 用于登记默认目录之外或非 `ggml-*.bin` 命名的本地文件。可用 `--name` 为同名文件指定不同的列表名称。`check` 请求转写进程在空闲时重新验证。停用设置保存在本地数据库，即时阻止新任务使用该模型，已领取的任务继续运行。
+`add` 可登记本地 Whisper 权重文件或 Qwen3-ASR 模型目录。可用 `--name` 为同名模型指定不同的列表名称。`check` 请求转写进程在空闲时重新验证。停用设置保存在本地数据库，即时阻止新任务使用该模型，已领取的任务继续运行。
 
 服务端接收文件后，上传条目会在对应媒体出现在列表时收起。列表中的「已用」和「总耗时」从本次任务入队开始计算，包含排队时间。重试从新任务入队重新计时。识别时列表显示引擎上报的进度，Windows 还显示识别进程树占整机的 CPU 百分比和峰值提交内存。桌面阅读页可拖动播放器与讲稿之间的分隔条调节比例（20%–80%），也可聚焦后用左右方向键微调，双击分隔条恢复 60/40。比例在当前浏览器保存。窄屏采用上下布局。
 
 更换默认工具或模型时，先停止服务，将旧配置改名保存，再运行启动脚本重新选择。已设置 `RECUE_PROCESSING_CONFIG` 时，启动脚本优先使用它指定的配置。需要记录发布版本、源码 commit 或模型 revision 时，可按[配置示例](examples/processing.example.json)补充；问答生成的配置将这些来源字段标记为 `unrecorded`。
+
+### 配置 Qwen3-ASR
+
+ReCue 通过 [Qwen 官方 `qwen-asr` Transformers 后端](https://github.com/QwenLM/Qwen3-ASR#python-package-usage)在本地 CPU 上运行 **Qwen3-ASR-0.6B / 1.7B** 和 **Qwen3-ForcedAligner-0.6B**。目前按中文课程设置语言，并保留识别结果中的混合英文。准备好依赖和权重后，转写进程从本地目录加载两个模型，使用对齐时间戳生成可点击的片段。
+
+1. 从项目根目录创建独立 Python 3.11 环境。macOS 执行：
+
+   ```bash
+   uv venv --no-project --python 3.11 .local/qwen3-runtime
+   uv pip install --python .local/qwen3-runtime/bin/python "qwen-asr==0.0.6"
+   ```
+
+   Windows 使用同一个 `uv venv` 命令，安装时将 `--python` 的路径替换为 `.local/qwen3-runtime/Scripts/python.exe`。
+
+2. 从 [Hugging Face](https://huggingface.co/collections/Qwen/qwen3-asr) 或 [ModelScope](https://modelscope.cn/models/Qwen/Qwen3-ASR-0.6B) 下载识别模型及 [ForcedAligner](https://modelscope.cn/models/Qwen/Qwen3-ForcedAligner-0.6B) 的完整本地目录。保留 `config.json`、分词器、预处理配置和全部 `.safetensors` 权重。
+
+3. 在 `backend` 目录运行以下命令，使用实际的绝对路径。它们会输出两个目录的 SHA-256 指纹。
+
+   ```text
+   uv run --locked python -m app.model_commands fingerprint "/path/to/Qwen3-ASR-0.6B"
+   uv run --locked python -m app.model_commands fingerprint "/path/to/Qwen3-ForcedAligner-0.6B" --aligner
+   ```
+
+4. 选择配置方式，然后重启服务。
+
+   - **沿用 Whisper 默认配置**。把 [Qwen3 配置示例](examples/processing.qwen3.example.json)里的 `qwen3` 对象加入现有 `processing.local.json`，填写虚拟环境 Python、对齐模型的绝对路径及 `aligner_sha256`。在 `backend` 目录运行 `uv run --offline --locked python -m app.model_commands add "/path/to/Qwen3-ASR-0.6B"` 登记识别模型。用相同命令可以登记其他 Qwen3-ASR 模型目录。
+   - **将 Qwen3 设为默认**。将 [Qwen3 配置示例](examples/processing.qwen3.example.json)复制到本地，填入实际路径、模型版本及两个指纹。通过 `RECUE_PROCESSING_CONFIG` 指向该 JSON，或将它保存为项目根目录的 `processing.local.json`。也可保留现有 Whisper 配置的 `executable` 和 `executable_sha256`，再用 `add` 登记 Whisper 权重。
+
+在「转写设置」看到模型可用后即可上传。初次验证会在后台加载识别和对齐权重，两款模型共用一个对齐器配置。CPU 推理按单批次运行，界面在识别阶段显示已用时间。长音频耗时和内存需求随模型、硬件及内容变化。
 
 ## 文章式文字稿
 

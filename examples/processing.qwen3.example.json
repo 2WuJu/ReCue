@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "engine": "qwen3-asr",
+  "backend": "cpu",
+  "engine_version": "0.0.6",
+  "engine_commit": "unrecorded",
+  "model_revision": "REPLACE_WITH_PINNED_MODEL_REVISION",
+  "model_name": "Qwen3-ASR-0.6B",
+  "model": "C:/ReCue/models/Qwen3-ASR-0.6B",
+  "model_sha256": "REPLACE_WITH_CHECKPOINT_FINGERPRINT",
+  "qwen3": {
+    "python": "C:/ReCue/.local/qwen3-runtime/Scripts/python.exe",
+    "aligner": "C:/ReCue/models/Qwen3-ForcedAligner-0.6B",
+    "aligner_sha256": "REPLACE_WITH_CHECKPOINT_FINGERPRINT"
+  },
+  "ffprobe": "ffprobe"
+}

@@ -10,7 +10,9 @@ from app.processes import ProcessCancelled
 from app.repositories.database import connect
 from app.repositories.queue import QueueConflict, fail_owned, now_ms
 from app.repositories.transcripts import publish
-from app.transcription.whisper import TranscriptionError, transcribe
+from app.transcription import qwen3
+from app.transcription.segments import TranscriptionError
+from app.transcription.whisper import transcribe
 
 
 def owned(database, job, owner):
@@ -60,9 +62,10 @@ def process_attempt(settings, config, job, stop):
         source.relative_to(data_dir / "media")
         work = settings.data_dir / "media" / job["media_id"] / "attempts" / job["id"]
         config = select_model(config, job.get("requested_model"))
+        engine = config.snapshot["engine"]
         with connect(database) as db, db:
-            db.execute("UPDATE jobs SET model=?, parameters_json=? WHERE id=? AND worker_id=?",
-                       (config.snapshot["model_name"], json.dumps(config.snapshot), job["id"], owner))
+            db.execute("UPDATE jobs SET engine=?, model=?, parameters_json=? WHERE id=? AND worker_id=?",
+                       (engine, config.snapshot["model_name"], json.dumps(config.snapshot), job["id"], owner))
         stage("preprocessing")
         prepared = prepare(source, work / "prepared", ffmpeg=config.ffmpeg,
                            ffprobe=config.ffprobe, cancel=cancel)
@@ -97,15 +100,17 @@ def process_attempt(settings, config, job, stop):
                     WHERE id=? AND worker_id=? AND status='running'""",
                            (percent, cpu, peak_memory, warning, job["id"], owner))
 
-        segments = transcribe(prepared.audio, config.model, config.executable, work / "recognition",
-                              prepared.duration_ms, cancel=cancel, report=report)
+        recognize, runtime = (qwen3.transcribe, snapshot["qwen3"]) if engine == qwen3.ENGINE else (
+            transcribe, config.executable)
+        segments = recognize(prepared.audio, config.model, runtime, work / "recognition",
+                             prepared.duration_ms, cancel=cancel, report=report)
         if pressure_samples >= 3:
             with connect(database) as db, db:
                 db.execute("UPDATE jobs SET error_message=NULL WHERE id=? AND worker_id=?",
                            (job["id"], owner))
         stage("organizing")
         publish(database, job["id"], owner, duration_ms=prepared.duration_ms,
-                media_type=prepared.media_type, segments=segments, engine="whisper.cpp",
+                media_type=prepared.media_type, segments=segments, engine=engine,
                 model=config.snapshot["model_name"], processing_version=config.snapshot["processing_version"],
                 playback_path=prepared.playback.relative_to(settings.data_dir).as_posix())
     except (ProcessCancelled, QueueConflict):

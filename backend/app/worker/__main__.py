@@ -13,7 +13,7 @@ from app.processes import ProcessCancelled
 from app.repositories.database import connect, migrate
 from app.worker.recovery import interrupt_previous_jobs
 from app.worker.containment import await_cleanup, containment
-from app.worker.configuration import (file_signature, load_processing, model_wait_reasons,
+from app.worker.configuration import (entry_signature, load_processing, model_wait_reasons,
                                       refresh_models)
 from app.worker.resources import available_memory
 from app.worker.processor import process_attempt
@@ -86,7 +86,7 @@ def main():
                         heartbeat("processing")
                         verified = {name: entry for name, entry in entries.items()
                                     if entry["status"] == "verified"
-                                    and file_signature(entry["path"]) == entry["signature"]}
+                                    and entry_signature(entry) == entry["signature"]}
                         blocked_models = model_wait_reasons(entries, available_memory())
                         job = claim_next(settings.database, worker_id, configuration=config.snapshot,
                                          model_revisions={name: entry["revision"] for name, entry in verified.items()},

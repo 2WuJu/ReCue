@@ -14,8 +14,10 @@ import time
 import wave
 
 from app.repositories.database import connect
-from app.transcription.whisper import UnsupportedModel, probe_model
-from app.worker.resources import (MEASURED_MODELS, MemoryPressure, available_memory,
+from app.transcription import qwen3
+from app.transcription.segments import UnsupportedModel
+from app.transcription.whisper import probe_model
+from app.worker.resources import (MEASURED_MODELS, MIB, PROBE_RESERVE_MIB, MemoryPressure, available_memory,
                                   probe_budget, resource_status)
 
 WORKER_HEARTBEAT_TTL = 10
@@ -27,7 +29,7 @@ class ModelUnavailable(ValueError):
 
 @dataclass(frozen=True)
 class ProcessingConfig:
-    executable: Path
+    executable: Path | None
     model: Path
     ffmpeg: str
     ffprobe: str
@@ -44,10 +46,34 @@ def file_signature(path):
         return [info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns]
 
 
+def model_signature(path, runtime=None):
+    if runtime is None:
+        return file_signature(path)
+    try:
+        checkpoints = []
+        for directory in (Path(path), Path(runtime["aligner"])):
+            files = [[file.name, file_signature(file)] for file in qwen3.checkpoint_files(directory)]
+            if not files or any(signature is None for _, signature in files):
+                return None
+            checkpoints.append(files)
+        python = file_signature(runtime["python"])
+        runner = file_signature(qwen3.RUNNER)
+        if python is None or runner is None:
+            return None
+    except OSError:
+        return None
+    size = sum(signature[2] for files in checkpoints for _, signature in files)
+    return [python, runner, size, checkpoints]
+
+
+def entry_signature(entry):
+    return model_signature(entry["path"], entry.get("qwen3"))
+
+
 MODEL_MESSAGES = {
     "pending": "等待服务端验证",
-    "unsupported": "需要 whisper.cpp 可加载的多语言 GGML Whisper 权重",
-    "check_failed": "模型检查失败，请检查权重文件和服务端日志",
+    "unsupported": "模型与当前配置不兼容，请检查转写引擎和权重格式",
+    "check_failed": "模型检查失败，请检查模型、运行环境和服务端日志",
     "check_timeout": "模型检查超时，请在服务端重新检查",
     "missing": "模型文件已移走或需要重新验证",
     "disabled": "由服务端停用",
@@ -89,7 +115,7 @@ def model_catalog(settings):
             status = "pending"
         elif status == "verified":
             status = (resource_status(entry, available)
-                      if file_signature(entry["path"]) == entry["signature"] else "missing")
+                      if entry_signature(entry) == entry["signature"] else "missing")
         required = entry.get("required_memory_mib")
         message = ("暂时无法读取处理电脑的可用内存"
                    if status == "resource_unknown" and available is None else MODEL_MESSAGES[status])
@@ -107,11 +133,24 @@ def configured_models(settings):
 
 def probe_entry(config, work, audio, entry, stop):
     path = Path(entry["path"])
+    runtime = entry.get("qwen3")
     signature = entry["signature"]
+    if entry["engine"] == qwen3.ENGINE and runtime is None:
+        return "unsupported"
+    if entry["engine"] == "whisper.cpp" and config.executable is None:
+        return "unsupported"
     if signature is None:
         return "missing"
     if entry.get("sha256"):
         digest = entry["sha256"]
+    elif runtime:
+        aligner = Path(runtime["aligner"])
+        qwen3.check_checkpoint(path)
+        qwen3.check_checkpoint(aligner, aligner=True)
+        if qwen3.checkpoint_digest(aligner) != runtime["aligner_sha256"]:
+            logging.warning("Qwen3 forced aligner SHA-256 mismatch: %s", aligner.name)
+            return "check_failed"
+        digest = qwen3.checkpoint_digest(path)
     else:
         with path.open("rb") as stream:
             header = stream.read(32)
@@ -130,7 +169,8 @@ def probe_entry(config, work, audio, entry, stop):
     if reference:
         entry.update(required_memory_mib=reference, memory_source="reference")
     available = available_memory()
-    if available is not None and available < max(probe_budget(entry), entry.get("probe_resume_mib", 0)):
+    budget = (ceil(2 * signature[2] / MIB) + PROBE_RESERVE_MIB if runtime else probe_budget(entry))
+    if available is not None and available < max(budget, entry.get("probe_resume_mib", 0)):
         return "memory_insufficient"
     peak = 0
 
@@ -142,11 +182,17 @@ def probe_entry(config, work, audio, entry, stop):
             entry["probe_resume_mib"] = (available or 0) + 512
             raise MemoryPressure("Available memory fell below the probe reserve")
 
-    probe_model(audio, path, config.executable, work, stop, report=sample)
-    if file_signature(path) != signature:
+    if runtime:
+        qwen3.probe_model(audio, path, runtime, work, stop, report=sample)
+    else:
+        probe_model(audio, path, config.executable, work, stop, report=sample)
+    if entry_signature(entry) != signature:
         return "pending"
     if peak:
         entry["probe_peak_memory_mib"] = ceil(peak)
+    if runtime and budget >= ceil(peak * 1.15):
+        entry.update(required_memory_mib=budget, memory_source="reference")
+    elif peak:
         estimate = ceil(peak * 1.15)
         if not reference or estimate > reference:
             entry.update(required_memory_mib=estimate,
@@ -159,24 +205,31 @@ def refresh_models(settings, config, previous, stop, publish):
         controls = {row["name"]: dict(row) for row in db.execute("SELECT * FROM model_controls")}
     default = config.model
     candidates = {name: Path(entry["path"]) for name, entry in previous.items()
-                  if not file_signature(entry["path"])}
+                  if not entry_signature(entry)}
     candidates.update((name, Path(row["path"])) for name, row in controls.items() if row["path"])
-    candidates.update((path.name, path) for path in sorted(default.parent.glob("ggml-*.bin"))
-                      if path.resolve().parent == default.resolve().parent)
+    if config.executable:
+        candidates.update((path.name, path) for path in sorted(default.parent.glob("ggml-*.bin"))
+                          if path.resolve().parent == default.resolve().parent)
     candidates[default.name] = default
     entries = {}
     for name, path in candidates.items():
         control = controls.get(name, {})
-        signature = file_signature(path)
+        engine = config.snapshot["engine"] if name == default.name else (
+            qwen3.ENGINE if path.is_dir() else "whisper.cpp")
+        runtime = config.snapshot.get("qwen3") if engine == qwen3.ENGINE else None
+        signature = model_signature(path, runtime)
         revision = control.get("revision", 0)
         old = previous.get(name, {})
         same = (old.get("path") == str(path) and old.get("signature") == signature
+                and old.get("engine") == engine
                 and old.get("revision") == revision)
         if same and old["status"] not in {"pending", "memory_insufficient"}:
             entries[name] = old
         else:
             entry = dict(name=name, path=str(path), signature=signature, revision=revision,
-                         is_default=name == default.name, status="pending")
+                         is_default=name == default.name, engine=engine, status="pending")
+            if runtime:
+                entry["qwen3"] = runtime
             if same and old["status"] == "memory_insufficient":
                 entry = old
             entries[name] = entry
@@ -187,7 +240,7 @@ def refresh_models(settings, config, previous, stop, publish):
     if not pending:
         return entries
 
-    with TemporaryDirectory(prefix="whisper-probe-", dir=settings.data_dir / "tmp") as temporary:
+    with TemporaryDirectory(prefix="model-probe-", dir=settings.data_dir / "tmp") as temporary:
         work = Path(temporary)
         audio = work / "silence.wav"
         with wave.open(str(audio), "wb") as wav:
@@ -196,6 +249,7 @@ def refresh_models(settings, config, previous, stop, publish):
         for entry in sorted(pending, key=lambda candidate: not candidate["is_default"]):
             if stop.is_set():
                 break
+            (work / "probe.log").unlink(missing_ok=True)
             try:
                 entry["status"] = probe_entry(config, work, audio, entry, stop)
             except UnsupportedModel:
@@ -207,7 +261,7 @@ def refresh_models(settings, config, previous, stop, publish):
             except (ValueError, OSError, TypeError, KeyError, subprocess.SubprocessError):
                 entry["status"] = "check_failed"
                 detail = work / "probe.log"
-                logging.exception("Cannot check Whisper model %s", entry["name"])
+                logging.exception("Cannot check model %s", entry["name"])
                 if detail.is_file():
                     with detail.open("rb") as stream:
                         stream.seek(max(0, detail.stat().st_size - 2048))
@@ -232,14 +286,24 @@ def model_wait_reasons(entries, available):
 def select_model(config, name):
     name = name or config.model.name
     entry = config.models.get(name)
-    if entry is None or file_signature(entry["path"]) != entry["signature"]:
+    if entry is None or entry_signature(entry) != entry["signature"]:
         raise ModelUnavailable("Selected model is unavailable")
     if name == config.model.name:
         return config
     path = Path(entry["path"])
     snapshot = {**config.snapshot, "model": str(path), "model_sha256": entry["sha256"],
                 "model_name": name, "model_revision": "unrecorded"}
+    if entry["engine"] != config.snapshot["engine"]:
+        snapshot.update(engine_version="unrecorded", engine_commit="unrecorded")
+    apply_engine(snapshot, entry["engine"])
     return replace(config, model=path, snapshot=snapshot)
+
+
+def apply_engine(snapshot, engine):
+    snapshot.update(engine=engine, language="zh", threads=8, processors=1, vad=False,
+                    chunking=engine == qwen3.ENGINE)
+    if engine == qwen3.ENGINE:
+        snapshot["engine_version"] = qwen3.VERSION
 
 
 def load_processing(settings, *, verify_default=True):
@@ -252,27 +316,48 @@ def load_processing(settings, *, verify_default=True):
     for field in ("engine_version", "engine_commit", "model_revision", "model_name"):
         if not isinstance(payload.get(field), str) or not payload[field].strip():
             raise ValueError(f"Processing config requires {field}")
-    paths = []
-    for field in ("executable", "model"):
-        path = Path(payload[field])
-        digest = payload.get(field + "_sha256")
-        if not path.is_absolute() or not isinstance(digest, str):
-            raise ValueError(f"Processing config requires absolute {field} and SHA-256")
-        if field != "model" or verify_default:
-            if not path.is_file():
-                raise ValueError(f"Processing config requires an existing {field}")
-            with path.open("rb") as stream:
-                if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
-                    raise ValueError(f"Processing config {field} SHA-256 mismatch")
-        paths.append(path)
+    engine = payload.get("engine", "whisper.cpp")
+    if engine not in ("whisper.cpp", qwen3.ENGINE):
+        raise ValueError("Processing config engine must be whisper.cpp or qwen3-asr")
+    runtime = payload.get("qwen3")
+    if runtime is not None:
+        if not isinstance(runtime, dict):
+            raise ValueError("Processing config qwen3 must be an object")
+        for field in ("python", "aligner"):
+            if not isinstance(runtime.get(field), str) or not Path(runtime[field]).is_absolute():
+                raise ValueError(f"Processing config requires absolute qwen3.{field}")
+        if not isinstance(runtime.get("aligner_sha256"), str):
+            raise ValueError("Processing config requires qwen3.aligner_sha256")
+    elif engine == qwen3.ENGINE:
+        raise ValueError("The qwen3-asr default requires a qwen3 runtime and forced aligner")
+
+    model = Path(payload["model"])
+    if not model.is_absolute() or not isinstance(payload.get("model_sha256"), str):
+        raise ValueError("Processing config requires absolute model and SHA-256")
+    executable = None
+    if "executable" in payload or engine == "whisper.cpp":
+        executable = Path(payload["executable"])
+        if not executable.is_absolute() or not executable.is_file():
+            raise ValueError("Processing config requires an existing absolute executable")
+        with executable.open("rb") as stream:
+            if hashlib.file_digest(stream, "sha256").hexdigest() != payload.get("executable_sha256"):
+                raise ValueError("Processing config executable SHA-256 mismatch")
+    if verify_default:
+        if engine == qwen3.ENGINE:
+            qwen3.check_checkpoint(model)
+            digest = qwen3.checkpoint_digest(model)
+        else:
+            with model.open("rb") as stream:
+                digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        if digest != payload["model_sha256"]:
+            raise ValueError("Processing config model SHA-256 mismatch")
     if not isinstance(payload.get("ffprobe", "ffprobe"), str):
         raise ValueError("ffprobe must be an executable path or name")
     tools = [shutil.which(settings.ffmpeg), shutil.which(payload.get("ffprobe", "ffprobe"))]
     if not all(tools):
         raise ValueError("FFmpeg and FFprobe are required before claiming work")
-    snapshot = {**payload, "engine": "whisper.cpp", "language": "zh", "threads": 8,
-                "processors": 1, "vad": False, "chunking": False,
-                "processing_version": "recue-pipeline-v1",
+    snapshot = {**payload, "processing_version": "recue-pipeline-v1",
                 "timeline_mapping": "source_pts_seconds - source_origin_seconds", "asr_offset_ms": 0,
                 "ffmpeg": str(Path(tools[0]).resolve()), "ffprobe": str(Path(tools[1]).resolve())}
-    return ProcessingConfig(*paths, snapshot["ffmpeg"], snapshot["ffprobe"], snapshot)
+    apply_engine(snapshot, engine)
+    return ProcessingConfig(executable, model, snapshot["ffmpeg"], snapshot["ffprobe"], snapshot)
