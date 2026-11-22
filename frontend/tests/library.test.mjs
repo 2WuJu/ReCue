@@ -28,7 +28,7 @@ test('blocked configuration explains why uploads wait and how to resume', () => 
 test('offline worker gives a different recovery action', () => {
   const html = render('offline');
   assert.match(html, /转写进程未运行或已失联/);
-  assert.match(html, /node scripts\/recue.mjs launch/);
+  assert.match(html, /<code>node recue\.mjs<\/code>/);
   assert.doesNotMatch(html, /转写配置缺失或无效/);
 });
 

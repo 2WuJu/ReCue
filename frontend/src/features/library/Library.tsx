@@ -265,7 +265,7 @@ export function Library({ health }: { health: Health | null }) {
       <h2>{health.worker.status === 'blocked_config' ? '转写配置缺失或无效' : health.worker.status === 'offline' ? '转写进程未运行或已失联' : '转写服务尚未就绪'}</h2>
       <p>现在上传只会保存文件并排队，不会生成讲稿。已接收的文件无需重新上传。服务恢复后，排队任务会自动开始；标为「中断」的任务请点击「重试」。</p>
       {health.worker.status === 'blocked_config' ? <p>请检查 processing.local.json 或启动终端中 <code>RECUE_PROCESSING_CONFIG</code>，按项目使用说明准备转写引擎和模型，核对配置及文件哈希，再停止并重新启动服务。具体校验错误见启动终端。</p>
-        : <p>请检查启动终端输出。如果转写进程已退出，可在 Windows 或 macOS 上运行 <code>node scripts/recue.mjs launch</code> 启动完整服务。</p>}
+        : <p>请检查启动终端输出。如果转写进程已退出，可在 Windows 或 macOS 上运行 <code>node recue.mjs</code> 启动完整服务。</p>}
     </section>}
     {loadError && <p role="alert" className="error">{loadError} · 正在重连，列表可能不是最新状态。 <button onClick={() => setRevision(n => n + 1)}>重新连接</button></p>}
     {error && <p role="alert" className="error">{error} <button onClick={() => setError('')}>关闭提示</button></p>}

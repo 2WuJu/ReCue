@@ -22,28 +22,37 @@ sequenceDiagram
 
 后台领取任务、处理音轨和发布讲稿的步骤见[完整流程图](README.md#一段录音如何变成可点击的讲稿)。安装步骤见[首次启动](README.md#首次启动)。队列停住时见[常见问题](#常见问题)。
 
-## 部署配置参考
+## 安装与模型下载
 
-配置通过启动终端的环境变量传入，当前不自动读取 `.env` 文件。
+处理电脑需要 [Node.js 与 npm](https://nodejs.org/)（Node 20.19+ 或 22.12+）、[uv](https://docs.astral.sh/uv/getting-started/installation/) 以及 [FFmpeg 和 FFprobe](https://ffmpeg.org/download.html)。将工具加入 PATH，FFmpeg 需支持 libx264 和 AAC。macOS 可用 Homebrew 执行 `brew install ffmpeg`，一次安装两个命令。可用 `ffmpeg -version` 和 `ffprobe -version` 检查当前终端能否调用。项目的 Python 版本和网页依赖由首次启动准备。
 
-| 环境变量 | 默认值 | 用途 |
+| 用途 | 模型与下载 | 配置要求 |
 | --- | --- | --- |
-| `RECUE_HOST` | `127.0.0.1` | API 监听地址 |
-| `RECUE_PORT` | `4318` | API 端口 |
-| `RECUE_DATA_DIR` | 项目下 `data/` | 数据库、原文件、播放副本与运行记录；自定义时须用绝对路径 |
-| `RECUE_FFMPEG` | `ffmpeg` | FFmpeg 命令或绝对路径；FFprobe 在处理 JSON 中设置 |
-| `RECUE_PROCESSING_CONFIG` | 未设置 | 处理 JSON 的绝对路径，交互启动时自动设置 |
-| `RECUE_MODEL_PATH` | 未设置 | 旧预检兼容项，仅检查文件存在，不能替代处理 JSON |
+| 转写 · Whisper CPU | 已实测 [medium Q5_0（539 MB）](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium-q5_0.bin) 和 [large-v3 Q5_0（1.08 GB）](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin)。也可尝试[同仓库的多语言 GGML 权重](https://huggingface.co/ggerganov/whisper.cpp/tree/main) | [whisper.cpp 原生 CLI 和配套库](https://github.com/ggml-org/whisper.cpp/releases)（macOS 可用 [Homebrew](https://formulae.brew.sh/formula/whisper.cpp)），以及一个多语言 `ggml-*.bin` 文件；`.en` 权重仅支持英语 |
+| 转写 · Qwen3-ASR CPU | [0.6B](https://huggingface.co/Qwen/Qwen3-ASR-0.6B/tree/main) 或 [1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B/tree/main)，均需 [Qwen3-ForcedAligner-0.6B](https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B/tree/main) | 分别下载识别和对齐模型的完整目录，保留配置、分词器及全部 `.safetensors` 分片。需要独立的 Python 3.11 环境和 [`qwen-asr==0.0.6`](https://pypi.org/project/qwen-asr/0.0.6/) |
+| 文章补标点 · CT-Transformer | [中英 INT8 权重（约 62 MiB）](https://github.com/k2-fsa/sherpa-onnx/releases/download/punctuation-models/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12-int8.tar.bz2) | 可选，按[文章式文字稿](#文章式文字稿)用脚本下载并校验 |
 
-开发中使用过 whisper.cpp `b5454` 与 `medium-q5_0`，仅为可运行基线，不作为质量推荐。工具、模型、本地配置和数据不进入 Git；请记录实际固定版本、下载来源和文件哈希。依赖与模型准备后，启动使用 `uv --offline --locked`，前端无 CDN；整机断网后的完整流程尚待验收。
-
-支持 `--service api` 或 `--service worker` 分开启停；使用同一数据目录并以相同参数停止各自入口。
-
-依赖完整性检查：`uv lock --check --offline`、`uv pip check`。其余开发检查见 README。
+转写当前使用 CPU，面向中文课程及夹杂的英文术语。Whisper 已在 Windows 和 macOS 验证；两款 Qwen3-ASR 已在 Apple Silicon macOS 实测，Windows 已核对 Python 依赖可解析，仍待实机转写验证。Qwen3-ASR 使用 FP32，对内存要求较高。在同一台 Apple Silicon Mac 上转写 65 秒样本时，识别子进程的峰值约为 9 GiB（0.6B）和 14 GiB（1.7B）。实际余量以「转写设置」为准。
 
 ### 准备转写配置
 
-Windows 可双击项目根目录的 `Start.cmd`，macOS 可在项目根目录运行 `bash scripts/start.sh`。两个平台也可运行 `node scripts/recue.mjs launch`。第一次输入 whisper-cli 和多语言 GGML 模型的路径后，脚本将绝对路径和 SHA-256 保存到 `processing.local.json`，随后启动网页和后台进程。再次启动会复用该文件。将项目从 Windows 迁到 macOS 时，按当前电脑上的路径重新生成处理配置。
+- **Whisper**。启动时输入权重文件路径。如果 `whisper-cli` 已在 PATH 上，程序会自动找到它；否则再输入 CLI 路径。
+- **Qwen3-ASR**。先按[下方步骤](#配置-qwen3-asr)安装运行环境，再在启动时输入识别模型目录路径。
+
+配置及文件指纹会写入项目根目录的 `processing.local.json`，之后自动复用。更换默认模型或迁移到另一台电脑时，先停止服务，保留旧配置并改名，再次启动即可重新选择。自定义部署可通过 `RECUE_PROCESSING_CONFIG` 指向现有配置，参见 [Whisper 示例](examples/processing.example.json)和 [Qwen3-ASR 示例](examples/processing.qwen3.example.json)。
+
+### 配置 Qwen3-ASR
+
+在项目根目录执行以下命令，Windows 和 macOS 用法相同。
+
+```text
+uv venv --no-project --python 3.11 .local/qwen3-runtime
+uv pip install --python .local/qwen3-runtime "qwen-asr==0.0.6"
+```
+
+也可按 [Qwen 官方下载说明](https://github.com/QwenLM/Qwen3-ASR#released-models-description-and-download)从 ModelScope 下载。将识别模型和 `Qwen3-ForcedAligner-0.6B` 放在同一父目录下。首次启动时输入识别模型目录，ReCue 会找到同级对齐模型和上面创建的 Python 环境。如果资源放在其他位置，再按提示输入路径。
+
+### 管理已安装模型
 
 上传前可展开「转写设置」，查看处理电脑上的模型、可用状态和原因。转写进程会发现默认模型及其同目录的 Whisper `ggml-*.bin`，并在空闲时验证已发现或手动登记的模型。无法加载、仅支持英语或验证超时的权重会给出对应状态。短测基于一秒静音，内存估算用于帮助选择模型。对于参考数据不足的模型，列表可显示「资源需求未知」。
 
@@ -62,36 +71,26 @@ uv run --offline --locked python -m app.model_commands enable ggml-large-v3-q5_0
 
 服务端接收文件后，上传条目会在对应媒体出现在列表时收起。列表中的「已用」和「总耗时」从本次任务入队开始计算，包含排队时间。重试从新任务入队重新计时。识别时列表显示引擎上报的进度，Windows 还显示识别进程树占整机的 CPU 百分比和峰值提交内存。桌面阅读页可拖动播放器与讲稿之间的分隔条调节比例（20%–80%），也可聚焦后用左右方向键微调，双击分隔条恢复 60/40。比例在当前浏览器保存。窄屏采用上下布局。
 
-更换默认工具或模型时，先停止服务，将旧配置改名保存，再运行启动脚本重新选择。已设置 `RECUE_PROCESSING_CONFIG` 时，启动脚本优先使用它指定的配置。需要记录发布版本、源码 commit 或模型 revision 时，可按[配置示例](examples/processing.example.json)补充；问答生成的配置将这些来源字段标记为 `unrecorded`。
+Whisper 和 Qwen3-ASR 可以同时出现在「转写设置」。如果要混用两种引擎，现有配置须同时保留 Whisper 的 `executable`、`executable_sha256`，以及 Qwen3 的 `qwen3` 对象。两份配置示例中的字段可合并，`engine` 和 `model` 保留默认模型的设置。需要手动补齐对齐目录指纹时，在 `backend` 目录运行 `uv run --offline --locked python -m app.model_commands fingerprint "/path/to/Qwen3-ForcedAligner-0.6B" --aligner`。更新后重启，再用 `add` 登记另一种引擎的模型。
 
-### 配置 Qwen3-ASR
+## 部署配置参考
 
-ReCue 通过 [Qwen 官方 `qwen-asr` Transformers 后端](https://github.com/QwenLM/Qwen3-ASR#python-package-usage)在本地 CPU 上运行 **Qwen3-ASR-0.6B / 1.7B** 和 **Qwen3-ForcedAligner-0.6B**。目前按中文课程设置语言，并保留识别结果中的混合英文。准备好依赖和权重后，转写进程从本地目录加载两个模型，使用对齐时间戳生成可点击的片段。
+配置通过启动终端的环境变量传入，当前不自动读取 `.env` 文件。
 
-1. 从项目根目录创建独立 Python 3.11 环境。macOS 执行：
+| 环境变量 | 默认值 | 用途 |
+| --- | --- | --- |
+| `RECUE_HOST` | `127.0.0.1` | API 监听地址 |
+| `RECUE_PORT` | `4318` | API 端口 |
+| `RECUE_DATA_DIR` | 项目下 `data/` | 数据库、原文件、播放副本与运行记录；自定义时须用绝对路径 |
+| `RECUE_FFMPEG` | `ffmpeg` | FFmpeg 命令或绝对路径；FFprobe 在处理 JSON 中设置 |
+| `RECUE_PROCESSING_CONFIG` | 未设置 | 处理 JSON 的绝对路径，交互启动时自动设置 |
+| `RECUE_MODEL_PATH` | 未设置 | 旧预检兼容项，仅检查文件存在，不能替代处理 JSON |
 
-   ```bash
-   uv venv --no-project --python 3.11 .local/qwen3-runtime
-   uv pip install --python .local/qwen3-runtime/bin/python "qwen-asr==0.0.6"
-   ```
+工具、模型、本地配置和数据保存在处理电脑上。依赖与模型准备后，启动使用 `uv --offline --locked`，前端无 CDN；整机断网后的完整流程尚待验收。
 
-   Windows 使用同一个 `uv venv` 命令，安装时将 `--python` 的路径替换为 `.local/qwen3-runtime/Scripts/python.exe`。
+支持 `--service api` 或 `--service worker` 分开启停；使用同一数据目录并以相同参数停止各自入口。
 
-2. 从 [Hugging Face](https://huggingface.co/collections/Qwen/qwen3-asr) 或 [ModelScope](https://modelscope.cn/models/Qwen/Qwen3-ASR-0.6B) 下载识别模型及 [ForcedAligner](https://modelscope.cn/models/Qwen/Qwen3-ForcedAligner-0.6B) 的完整本地目录。保留 `config.json`、分词器、预处理配置和全部 `.safetensors` 权重。
-
-3. 在 `backend` 目录运行以下命令，使用实际的绝对路径。它们会输出两个目录的 SHA-256 指纹。
-
-   ```text
-   uv run --locked python -m app.model_commands fingerprint "/path/to/Qwen3-ASR-0.6B"
-   uv run --locked python -m app.model_commands fingerprint "/path/to/Qwen3-ForcedAligner-0.6B" --aligner
-   ```
-
-4. 选择配置方式，然后重启服务。
-
-   - **沿用 Whisper 默认配置**。把 [Qwen3 配置示例](examples/processing.qwen3.example.json)里的 `qwen3` 对象加入现有 `processing.local.json`，填写虚拟环境 Python、对齐模型的绝对路径及 `aligner_sha256`。在 `backend` 目录运行 `uv run --offline --locked python -m app.model_commands add "/path/to/Qwen3-ASR-0.6B"` 登记识别模型。用相同命令可以登记其他 Qwen3-ASR 模型目录。
-   - **将 Qwen3 设为默认**。将 [Qwen3 配置示例](examples/processing.qwen3.example.json)复制到本地，填入实际路径、模型版本及两个指纹。通过 `RECUE_PROCESSING_CONFIG` 指向该 JSON，或将它保存为项目根目录的 `processing.local.json`。也可保留现有 Whisper 配置的 `executable` 和 `executable_sha256`，再用 `add` 登记 Whisper 权重。
-
-在「转写设置」看到模型可用后即可上传。初次验证会在后台加载识别和对齐权重，两款模型共用一个对齐器配置。CPU 推理按单批次运行，界面在识别阶段显示已用时间。长音频耗时和内存需求随模型、硬件及内容变化。
+依赖完整性检查：`uv lock --check --offline`、`uv pip check`。其余开发检查见 README。
 
 ## 文章式文字稿
 
@@ -141,13 +140,13 @@ API 日期和 `started_at` 为 Unix 毫秒；讲稿时间为相对播放起点�
 
 FFmpeg 生成 H.264/AAC MP4（音频为 AAC M4A）及 16 kHz 单声道 PCM。映射为 `source_pts_seconds - source_origin_seconds`，音视频共用原点，保留初始偏移和内部间隙。不删除静音，不平均分配时间。异常转写时间戳拒绝发布。点击讲稿从 `max(0, start_ms - 300)` 开始播放，原始讲稿时间戳不变。
 
-`RECUE_PROCESSING_CONFIG` 指向显式部署 JSON，字段见 [示例](examples/processing.example.json)。worker 校验版本、CPU 后端、工具/模型的 SHA-256、FFmpeg 与 FFprobe；固定中文、8 线程、单处理器、不启用 VAD/分块。缺失或无效时为 `blocked_config`，不领取排队任务。修改后重启 worker，不自动选模型或降级。`health.transcription_ready` 只代表配置就绪，不代表质量达标。
+`RECUE_PROCESSING_CONFIG` 指向显式部署 JSON，字段见 [示例](examples/processing.example.json)。worker 校验版本、CPU 后端、工具/模型的 SHA-256、FFmpeg 与 FFprobe；固定中文、8 线程、单处理器。Whisper 禁用 VAD 和分块，Qwen3-ASR 使用引擎自带的分块和强制对齐。缺失或无效时为 `blocked_config`，不领取排队任务。修改后重启 worker，不自动选模型或降级。`health.transcription_ready` 只代表配置就绪，不代表质量达标。
 
 ## 停止与恢复
 
 单独重启 API 不影响运行任务。重启 worker 前先确认旧工具进程树清理，再把遗留运行任务标记为 interrupted，排队任务保留；中断任务可手动重试，不承诺从转写中途续算。
 
-`node scripts/recue.mjs stop` 只写停止请求，命令返回不代表服务已经退出。先等启动终端结束，再确认 `runtime/processing.guard` 已由 guardian 清除；异常退出后 guardian 可能还需一段时间。分开启停时分别对原来的 api、worker 启动终端发出停止请求，`--service all` 不会停止分别启动的两个入口。备份前也须停止直接运行的 uvicorn/worker 实例。
+`node stop.mjs` 只写停止请求，命令返回不代表服务已经退出。先等启动终端结束，再确认 `runtime/processing.guard` 已由 guardian 清除；异常退出后 guardian 可能还需一段时间。分开启停时分别对原来的 api、worker 启动终端发出停止请求，`--service all` 不会停止分别启动的两个入口。备份前也须停止直接运行的 uvicorn/worker 实例。
 
 `GET /api/health` 的 `status=ok` 表示 API/数据库可用；`worker.status=processing` 和 `transcription_ready=true` 表示处理配置就绪，也可能正在空闲等待队列，不是当前一定有识别任务，更不代表模型质量通过。`offline` 或 `blocked_config` 时不能据 API 可访问判断转写正常。
 
@@ -158,7 +157,7 @@ macOS 由独立守护进程为每次工具调用创建进程组，并监视调�
 ## 常见问题
 
 - **队列不动**：检查健康状态和启动终端输出；`blocked_config` 时检查配置绝对路径、文件哈希（小写）、工具路径，修正后重启 worker。
-- **缺少前端**：运行 `node scripts/recue.mjs setup` 或 `npm --prefix frontend run build`；不要在服务进行 HTTP 验证时同时重写构建目录。
+- **缺少前端**：运行 `node recue.mjs setup` 或 `npm --prefix frontend run build`；不要在服务进行 HTTP 验证时同时重写构建目录。
 - **端口占用**：停止已有实例或设置 `RECUE_PORT`，分开运行的 API 与 worker 使用同一数据目录。
 - **uv 找不到**：按官方说明安装并刷新 PATH；通用入口兼容用户目录 `.local/bin` 的默认安装位置。
 - **停止无效**：核对 `--service` 和绝对路径 `RECUE_DATA_DIR` 是否与启动一致；stop 写入请求后，须等待启动终端退出。
@@ -212,7 +211,7 @@ if ($LASTEXITCODE -ge 8) { throw '恢复复制失败，不启动服务' }
 
 ```
 
-4. 在 Git Bash 运行 `RECUE_DATA_DIR=C:/ReCue/restored-data bash scripts/start.sh`（替换为实际恢复目录并沿用原部署配置）。查看健康状态、媒体列表及失败/中断记录，打开已完成媒体，核对讲稿、远端播放定位和保存进度。已删除媒体应仍不可见，旧上传 ID 查询应为 410。运行任务在停机后可能恢复为 interrupted，需要手动重试；备份不承诺识别中途续算。复核完成后再接收新上传。回退时先完整停止恢复实例，再把环境变量改回原目录，不能同时启动两份数据处理同一批操作。
+4. 在 Git Bash 运行 `RECUE_DATA_DIR=C:/ReCue/restored-data node recue.mjs`（替换为实际恢复目录并沿用原部署配置）。查看健康状态、媒体列表及失败/中断记录，打开已完成媒体，核对讲稿、远端播放定位和保存进度。已删除媒体应仍不可见，旧上传 ID 查询应为 410。运行任务在停机后可能恢复为 interrupted，需要手动重试；备份不承诺识别中途续算。复核完成后再接收新上传。回退时先完整停止恢复实例，再把环境变量改回原目录，不能同时启动两份数据处理同一批操作。
 
 ## 可信局域网与离线验收准备
 

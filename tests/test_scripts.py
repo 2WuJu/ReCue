@@ -13,7 +13,8 @@ from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
-ENTRY = ROOT / "scripts" / "recue.mjs"
+ENTRY = ROOT / "recue.mjs"
+STOP = ROOT / "stop.mjs"
 
 
 @unittest.skipUnless(shutil.which("node"), "Node.js required for public launcher")
@@ -32,7 +33,8 @@ class ScriptTests(unittest.TestCase):
                        "RECUE_HOST": "127.0.0.1", "RECUE_PROCESSING_CONFIG": ""}
                 command = ["node", str(ENTRY)]
                 with (Path(directory) / "launcher.log").open("w+") as log:
-                    process = subprocess.Popen(command + ["start", "--service", service],
+                    start_args = [] if service == "api" else ["start"]
+                    process = subprocess.Popen(command + start_args + ["--service", service],
                                                cwd=directory, env=env, stdout=log, stderr=log)
                     try:
                         deadline = time.monotonic() + 20
@@ -49,7 +51,8 @@ class ScriptTests(unittest.TestCase):
                         else:
                             self.fail("Public launcher did not become ready")
                         self.assertTrue((data / "recue.sqlite3").is_file())
-                        stopped = subprocess.run(command + ["stop", "--service", service],
+                        stop_args = [] if service == "all" else ["--service", service]
+                        stopped = subprocess.run(["node", str(STOP), *stop_args],
                                                  cwd=directory, env=env, capture_output=True, timeout=10)
                         self.assertEqual(stopped.returncode, 0, stopped.stderr)
                         self.assertEqual(process.wait(timeout=20), 0)

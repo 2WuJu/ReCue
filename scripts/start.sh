@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 set -eu
-cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
-exec node scripts/recue.mjs launch "$@"
+CDPATH= cd -- "$(dirname -- "$0")/.."
+exec node recue.mjs launch "$@"

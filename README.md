@@ -49,30 +49,13 @@ sequenceDiagram
 
 ## 首次启动
 
-在处理电脑上准备以下工具。
+在 Windows 或 macOS 的项目根目录运行：
 
-| 准备什么 | 要求 |
-| --- | --- |
-| [Node.js 与 npm](https://nodejs.org/)、[uv](https://docs.astral.sh/uv/getting-started/installation/) | Node 20.19+ 或 22.12+，uv 管理 Python |
-| [FFmpeg 与 FFprobe](https://ffmpeg.org/download.html) | 两者都加入 PATH，FFmpeg 支持 libx264 和 AAC |
-| [whisper.cpp](https://github.com/ggml-org/whisper.cpp) | 适用于当前系统的 `whisper-cli` 和配套运行库，以及一个支持中文的多语言 GGML 模型 |
-
-1. Windows 可双击项目根目录的 `Start.cmd`。macOS 在项目根目录运行 `bash scripts/start.sh`。首次启动会联网安装项目依赖并构建网页。
-2. 按提示输入 **whisper-cli 路径**（Windows 为 `whisper-cli.exe`）和**模型文件路径**。脚本计算哈希、保存配置，然后启动服务。
-3. 打开[本机首页](http://127.0.0.1:4318/)，看到「转写服务就绪」即可上传。使用期间保持启动窗口打开。
-
-已有依赖和配置时，再次启动会直接复用。在命令提示符、PowerShell 或 Bash 中，也可以从项目根目录运行 `node scripts/recue.mjs launch`。
-
-macOS 上可以用 Homebrew 准备 [FFmpeg Full](https://formulae.brew.sh/formula/ffmpeg-full) 和 [whisper.cpp](https://formulae.brew.sh/formula/whisper.cpp)。准备好 Node.js、uv 和模型后，从项目根目录执行：
-
-```bash
-brew install ffmpeg-full whisper.cpp
-export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"
-command -v whisper-cli
-bash scripts/start.sh
+```text
+node recue.mjs
 ```
 
-按提示填写 `command -v whisper-cli` 输出的路径。使用其他来源的原生二进制时，把 `ffmpeg` 和 `ffprobe` 放在 PATH 中，并确认 FFmpeg 提供 `libx264` 和 AAC 编码器。默认配置使用 Whisper CPU。也可以[配置 Qwen3-ASR CPU](USAGE.md#配置-qwen3-asr)，并在上传前通过「转写设置」按批选择模型。
+首次使用请先按[安装与模型下载](USAGE.md#安装与模型下载)准备工具和一个转写模型。启动时按提示选择模型，随后打开 [http://127.0.0.1:4318/](http://127.0.0.1:4318/)。以后运行同一条命令即可。
 
 ## 上传了，为什么没有讲稿？
 
@@ -80,7 +63,7 @@ bash scripts/start.sh
 
 | 看到的状态 | 接下来做什么 |
 | --- | --- |
-| 转写配置缺失或无效 / `blocked_config` | 查看启动终端的具体校验错误，按[配置说明](USAGE.md#准备转写配置)更新工具和模型路径，再停止并重启。已有排队文件会继续处理，无需重传 |
+| 转写配置缺失或无效 / `blocked_config` | 查看启动终端的具体校验错误，按[配置说明](USAGE.md#安装与模型下载)更新工具和模型路径，再停止并重启。已有排队文件会继续处理，无需重传 |
 | 转写进程未运行或已失联 / `offline` | 查看启动终端，确认启动的是完整服务；`start --service api` 只启动网页，无法转写 |
 | 排队中，且转写服务就绪 | 前面的任务正在处理；当前一次只处理一个文件 |
 | 预处理中 / 转写中 / 整理中 | 等待完成；页面显示阶段与耗时，没有估算百分比。CPU 转写可能较慢 |
@@ -102,7 +85,7 @@ curl http://127.0.0.1:4318/api/health
 在启动终端按 `Ctrl+C`，或另开终端运行并等待启动终端退出：
 
 ```bash
-node scripts/recue.mjs stop
+node stop.mjs
 ```
 
 默认所有数据保存在项目的 `data/` 下。更换数据目录或分开启停服务时，停止命令必须使用与启动相同的 `RECUE_DATA_DIR` 和 `--service`。
@@ -113,9 +96,9 @@ node scripts/recue.mjs stop
 
 支持本地音视频上传、后台转写、讲稿搜索、点击定位、播放跟随、进度恢复与媒体删除。工程上限为单文件 4 GiB、120 分钟，实际可处理格式取决于编码和音轨。识别质量、句首精度、单文件 60 分钟、不同内容的 5 文件组合、第二台电脑及完整离线流程仍待验收。
 
-Linux 可用 `node scripts/recue.mjs start --service api` 开发 API 与界面。
+Linux 可用 `node recue.mjs --service api` 开发 API 与界面。
 
-开发目录：`frontend/src/` 为 React + TypeScript 界面，`backend/app/` 为 API 与处理逻辑，`scripts/` 为启动入口，`tests/` 为后端测试。修改后可运行：
+开发目录：`frontend/src/` 为 React + TypeScript 界面，`backend/app/` 为 API 与处理逻辑，`recue.mjs` 为启动入口，`tests/` 为后端测试。修改后可运行：
 
 ```bash
 uv run --offline --locked python -m unittest discover -s tests -v
