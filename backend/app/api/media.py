@@ -14,8 +14,8 @@ from app.errors import ServiceError
 from app.repositories.media import get_media, list_media
 from app.repositories.transcripts import get_transcript
 from app.repositories.progress import progress
-from app.repositories.queue import MediaNotFound, QueueConflict, retry
-from app.services.uploads import storage_error
+from app.repositories.queue import MediaNotFound, ModelDisabled, QueueConflict, change_queued_model, retry
+from app.services.uploads import require_model, storage_error
 from app.services.deletion import request_delete
 from app.locking import AlreadyRunning
 from app.services.article import ArticleFormatter
@@ -28,6 +28,7 @@ class JobView(BaseModel):
     attempt: int
     created_at: int
     requested_model: str | None = None
+    wait_reason: str | None = None
     progress_percent: int | None = None
     cpu_percent: float | None = None
     peak_memory_mib: float | None = None
@@ -61,6 +62,10 @@ class MediaPage(BaseModel):
 class RetryReceipt(BaseModel):
     media_id: UUID
     job_id: UUID
+
+
+class ModelChoice(BaseModel):
+    model: Annotated[str, Field(min_length=1, max_length=255)]
 
 
 class TranscriptSegment(BaseModel):
@@ -186,9 +191,21 @@ def media_router(settings):
     @router.post("/api/media/{media_id}/retry", response_model=RetryReceipt, status_code=201,
                  responses={**errors, **{code: {"model": ErrorResponse} for code in (403, 404, 409)}},
                  summary="为失败或中断的媒体创建新attempt；保留旧任务")
-    def retry_media(media_id: UUID):
+    def retry_media(media_id: UUID, body: ModelChoice | None = None):
         try:
-            job_id = retry(settings.database, str(media_id))
+            model = require_model(settings, body.model) if body else None
+            default = None
+            if body is None:
+                item = get_media(settings.database, str(media_id))
+                job = item["latest_job"] if item else None
+                if job and job["status"] in {"failed", "interrupted"}:
+                    if job["requested_model"] is None:
+                        default = require_model(settings, None)
+                    else:
+                        require_model(settings, job["requested_model"], allow_offline=True)
+            job_id = retry(settings.database, str(media_id), model, default_model=default)
+        except ModelDisabled as exc:
+            raise ServiceError(409, "model_disabled", "原模型已停用，请更换模型") from exc
         except MediaNotFound as exc:
             raise ServiceError(404, "media_not_found", "媒体不存在") from exc
         except QueueConflict as exc:
@@ -196,6 +213,22 @@ def media_router(settings):
         except sqlite3.Error as exc:
             raise storage_error(exc) from exc
         return RetryReceipt(media_id=media_id, job_id=job_id)
+
+    @router.put("/api/media/{media_id}/model", response_model=ModelChoice,
+                responses={**errors, **{code: {"model": ErrorResponse} for code in (403, 404, 409)}})
+    def replace_queued_model(media_id: UUID, body: ModelChoice):
+        try:
+            require_model(settings, body.model)
+            change_queued_model(settings.database, str(media_id), body.model)
+        except MediaNotFound as exc:
+            raise ServiceError(404, "media_not_found", "媒体不存在") from exc
+        except ModelDisabled as exc:
+            raise ServiceError(409, "model_disabled", "所选模型已停用，请重新选择") from exc
+        except QueueConflict as exc:
+            raise ServiceError(409, "model_change_conflict", "仅排队中的任务可以更换模型") from exc
+        except sqlite3.Error as exc:
+            raise storage_error(exc) from exc
+        return body
 
     @router.get("/api/media/{media_id}/transcript", response_model=Transcript,
                 responses={**errors, **{code: {"model": ErrorResponse} for code in (404, 409)}},

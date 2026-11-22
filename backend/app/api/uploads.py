@@ -4,7 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Header, Query, Request, Response
 from pydantic import BaseModel
 
-from app.worker.configuration import configured_models
+from app.worker.configuration import configured_models, model_catalog
 from app.errors import ServiceError
 from app.services.uploads import lookup_receipt, receive_upload
 
@@ -22,6 +22,20 @@ class ErrorResponse(BaseModel):
     retryable: bool
 
 
+class ModelView(BaseModel):
+    name: str
+    is_default: bool
+    status: Literal["available", "below_recommended", "resource_unknown",
+                    "memory_insufficient", "pending", "unsupported", "check_failed",
+                    "check_timeout", "missing", "disabled", "offline"]
+    selectable: bool
+    message: str
+    required_memory_mib: int | None
+    recommended_memory_mib: int | None
+    available_memory_mib: int | None
+    memory_source: Literal["reference", "sampled_rss", "peak_commit"] | None
+
+
 def upload_router(settings):
     router = APIRouter()
     errors = {code: {"model": ErrorResponse} for code in (400, 403, 408, 409, 410, 413, 415, 422, 503, 507)}
@@ -30,6 +44,11 @@ def upload_router(settings):
     def models(response: Response):
         response.headers["Cache-Control"] = "no-store"
         return configured_models(settings)
+
+    @router.get("/api/models/status", response_model=list[ModelView])
+    def model_status(response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return model_catalog(settings)
 
     @router.post("/api/media", response_model=UploadReceipt, status_code=201,
                  responses={**errors, 200: {"model": UploadReceipt}},

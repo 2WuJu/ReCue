@@ -8,10 +8,10 @@ from anyio import CancelScope
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect, Request
 
-from app.worker.configuration import configured_models
+from app.worker.configuration import model_catalog
 from app.errors import ServiceError
 from app.locking import AlreadyRunning
-from app.repositories.queue import UploadDeleted, find_receipt, received
+from app.repositories.queue import ModelDisabled, UploadDeleted, find_receipt, received
 from app.storage.uploads import (
     MAX_UPLOAD_BYTES, flush_file, remove_uncommitted, upload_lock,
 )
@@ -33,6 +33,23 @@ def lookup_receipt(database, request_id):
         raise ServiceError(410, "upload_deleted", "该上传已删除，请选择文件发起新的上传") from exc
     except sqlite3.Error as exc:
         raise storage_error(exc) from exc
+
+
+def require_model(settings, name, *, allow_offline=False):
+    models = model_catalog(settings)
+    row = next((entry for entry in models if entry["name"] == name), None) if name else next(
+        (entry for entry in models if entry["is_default"]), None)
+    if row and (row["selectable"] or ((name is None or allow_offline) and row["status"] == "offline")):
+        return row["name"]
+    if row and row["status"] == "disabled":
+        raise ServiceError(422, "model_disabled", "所选模型已停用，请重新选择")
+    if row and row["status"] == "memory_insufficient":
+        raise ServiceError(422, "model_memory_insufficient", row["message"], True)
+    if not row and allow_offline and not models:
+        return name
+    if row or name:
+        raise ServiceError(422, "invalid_model", row["message"] if row else "所选模型不可用，请刷新后重新选择")
+    return None
 
 
 def finalize_upload(settings, temporary, source, request_id, media_id, display_name, total, model=None):
@@ -100,8 +117,7 @@ async def receive_upload(request: Request, settings, request_id: str, display_na
             receipt = await run_in_threadpool(lookup_receipt, settings.database, request_id)
             if receipt:
                 return receipt, False
-            if model is not None and model not in await run_in_threadpool(configured_models, settings):
-                raise ServiceError(422, "invalid_model", "所选模型不可用，请刷新后重新选择")
+            selected_model = await run_in_threadpool(require_model, settings, model)
             media_id = str(uuid4())
             temporary = settings.data_dir / "tmp" / f"{media_id}.part"
             source = settings.data_dir / "media" / media_id / "source"
@@ -131,13 +147,15 @@ async def receive_upload(request: Request, settings, request_id: str, display_na
                 with CancelScope(shield=True):
                     return await finish_before_cancelling(
                         finalize_upload, settings, temporary, source,
-                        request_id, media_id, display_name, total, model,
+                        request_id, media_id, display_name, total, selected_model,
                     )
             finally:
                 # Cleanup stays inside the lock, including cancellation/disconnect paths.
                 # Synchronous bounded deletion cannot be cancelled halfway through.
                 if temporary_owned and not finalizing:
                     remove_uncommitted(temporary, source)
+    except ModelDisabled as exc:
+        raise ServiceError(422, "model_disabled", "所选模型已停用，请重新选择") from exc
     except UploadDeleted as exc:
         raise ServiceError(410, "upload_deleted", "该上传已删除，请选择文件发起新的上传") from exc
     except AlreadyRunning as exc:

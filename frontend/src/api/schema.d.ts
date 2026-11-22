@@ -17,6 +17,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/models/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Model Status */
+        get: operations["model_status_api_models_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/media": {
         parameters: {
             query?: never;
@@ -98,6 +115,23 @@ export interface paths {
         put?: never;
         /** 为失败或中断的媒体创建新attempt；保留旧任务 */
         post: operations["retry_media_api_media__media_id__retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/media/{media_id}/model": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Replace Queued Model */
+        put: operations["replace_queued_model_api_media__media_id__model_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -250,6 +284,8 @@ export interface components {
             created_at: number;
             /** Requested Model */
             requested_model?: string | null;
+            /** Wait Reason */
+            wait_reason?: string | null;
             /** Progress Percent */
             progress_percent?: number | null;
             /** Cpu Percent */
@@ -305,6 +341,35 @@ export interface components {
             /** Delete Error */
             delete_error: string | null;
             latest_job: components["schemas"]["JobView"] | null;
+        };
+        /** ModelChoice */
+        ModelChoice: {
+            /** Model */
+            model: string;
+        };
+        /** ModelView */
+        ModelView: {
+            /** Name */
+            name: string;
+            /** Is Default */
+            is_default: boolean;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "available" | "below_recommended" | "resource_unknown" | "memory_insufficient" | "pending" | "unsupported" | "check_failed" | "check_timeout" | "missing" | "disabled" | "offline";
+            /** Selectable */
+            selectable: boolean;
+            /** Message */
+            message: string;
+            /** Required Memory Mib */
+            required_memory_mib: number | null;
+            /** Recommended Memory Mib */
+            recommended_memory_mib: number | null;
+            /** Available Memory Mib */
+            available_memory_mib: number | null;
+            /** Memory Source */
+            memory_source: ("reference" | "sampled_rss" | "peak_commit") | null;
         };
         /** PlaybackProgress */
         PlaybackProgress: {
@@ -437,6 +502,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": string[];
+                };
+            };
+        };
+    };
+    model_status_api_models_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelView"][];
                 };
             };
         };
@@ -847,7 +932,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ModelChoice"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             201: {
@@ -856,6 +945,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RetryReceipt"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    replace_queued_model_api_media__media_id__model_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelChoice"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelChoice"];
                 };
             };
             /** @description Forbidden */

@@ -3,6 +3,7 @@ import json
 import threading
 import re
 from app.worker.configuration import ModelUnavailable, select_model
+from app.worker.resources import available_memory, swap_written
 
 from app.media.prepare import PreparationError, prepare
 from app.processes import ProcessCancelled
@@ -68,7 +69,23 @@ def process_attempt(settings, config, job, stop):
         snapshot = {**config.snapshot, "source_origin_seconds": prepared.source_origin_seconds}
         stage("transcribing", snapshot)
 
+        previous_swap = swap_written()
+        pressure_samples = 0
+        swap_samples = 0
+
         def report(cpu, peak_memory):
+            nonlocal previous_swap, pressure_samples, swap_samples
+            available, written = available_memory(), swap_written()
+            under_pressure = available is not None and available < 512
+            paging = under_pressure and written is not None and previous_swap is not None and written > previous_swap
+            pressure_samples = pressure_samples + 1 if under_pressure else 0
+            swap_samples = swap_samples + 1 if paging else 0
+            previous_swap = written
+            warning = None
+            if swap_samples >= 3:
+                warning = "处理电脑内存紧张，正在持续换页，可停止转写或释放内存"
+            elif pressure_samples >= 3:
+                warning = "处理电脑可用内存持续偏低，可关闭其他程序释放内存"
             log = work / "recognition" / "stderr.log"
             with log.open("rb") as stream:
                 stream.seek(max(0, log.stat().st_size - 4096))
@@ -76,11 +93,16 @@ def process_attempt(settings, config, job, stop):
             percent = min(100, int(matches[-1])) if matches else None
             with connect(database) as db, db:
                 db.execute("""UPDATE jobs SET progress_percent=coalesce(?,progress_percent),
-                    cpu_percent=?, peak_memory_mib=? WHERE id=? AND worker_id=? AND status='running'""",
-                           (percent, cpu, peak_memory, job["id"], owner))
+                    cpu_percent=?, peak_memory_mib=?, error_message=?
+                    WHERE id=? AND worker_id=? AND status='running'""",
+                           (percent, cpu, peak_memory, warning, job["id"], owner))
 
         segments = transcribe(prepared.audio, config.model, config.executable, work / "recognition",
                               prepared.duration_ms, cancel=cancel, report=report)
+        if pressure_samples >= 3:
+            with connect(database) as db, db:
+                db.execute("UPDATE jobs SET error_message=NULL WHERE id=? AND worker_id=?",
+                           (job["id"], owner))
         stage("organizing")
         publish(database, job["id"], owner, duration_ms=prepared.duration_ms,
                 media_type=prepared.media_type, segments=segments, engine="whisper.cpp",

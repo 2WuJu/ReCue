@@ -103,6 +103,13 @@ MIGRATIONS = [
         "ALTER TABLE jobs ADD COLUMN peak_memory_mib REAL",
     ]),
     (8, ["ALTER TABLE worker_status ADD COLUMN models_json TEXT NOT NULL DEFAULT '[]'"]),
+    (9, [
+        """CREATE TABLE model_controls (
+            name TEXT PRIMARY KEY, path TEXT, disabled INTEGER NOT NULL DEFAULT 0,
+            revision INTEGER NOT NULL DEFAULT 0
+        )""",
+        "ALTER TABLE jobs ADD COLUMN wait_reason TEXT",
+    ]),
 ]
 
 

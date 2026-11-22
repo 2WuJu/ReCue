@@ -9,6 +9,10 @@ class TranscriptionError(ValueError):
     pass
 
 
+class UnsupportedModel(TranscriptionError):
+    pass
+
+
 def validate_segments(segments, duration_ms):
     if type(duration_ms) is not int or duration_ms <= 0:
         raise TranscriptionError("Media duration must be a positive integer in milliseconds")
@@ -45,16 +49,16 @@ def whisper_command(audio, model, executable):
             "-t", "8", "-p", "1", "-ng"]
 
 
-def probe_model(audio, model, executable, output_dir, cancel):
+def probe_model(audio, model, executable, output_dir, cancel, report=None):
     prefix = output_dir / "probe"
     output = prefix.with_suffix(".json")
     output.unlink(missing_ok=True)
     command = [*whisper_command(audio, model, executable), "-ojf", "-of", str(prefix)]
     with (output_dir / "probe.log").open("wb") as log:
-        run_tool(command, stdout=log, stderr=log, timeout=60, cancel=cancel)
+        run_tool(command, stdout=log, stderr=log, timeout=60, cancel=cancel, report=report, measure_memory=True)
     payload = json.loads(output.read_text(encoding="utf-8"))
     if payload["model"]["multilingual"] is not True or payload["result"]["language"] != "zh":
-        raise TranscriptionError("Whisper model must support Chinese transcription")
+        raise UnsupportedModel("Whisper model must support Chinese transcription")
 
 
 def transcribe(audio: Path, model: Path, executable: Path, output_dir: Path,

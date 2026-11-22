@@ -1,4 +1,5 @@
 import type { components } from './schema';
+export type ModelAvailability = components['schemas']['ModelView'];
 export type Media = components['schemas']['MediaView'];
 export type MediaPage = components['schemas']['MediaPage'];
 export type Transcript = components['schemas']['Transcript'];

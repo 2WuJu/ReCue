@@ -45,7 +45,20 @@ sequenceDiagram
 
 Windows 可双击项目根目录的 `Start.cmd`，macOS 可在项目根目录运行 `bash scripts/start.sh`。两个平台也可运行 `node scripts/recue.mjs launch`。第一次输入 whisper-cli 和多语言 GGML 模型的路径后，脚本将绝对路径和 SHA-256 保存到 `processing.local.json`，随后启动网页和后台进程。再次启动会复用该文件。将项目从 Windows 迁到 macOS 时，按当前电脑上的路径重新生成处理配置。
 
-上传前可展开「转写设置」。转写进程启动时，用本机 whisper-cli 对默认模型和同目录的 `ggml-*.bin` 做一次中文推理检查，客户端显示当前进程已验证且文件仍有效的模型。添加或替换模型后重启转写进程。所选模型应用于整批文件，失败重试沿用显式所选模型。
+上传前可展开「转写设置」，查看处理电脑上的模型、可用状态和原因。转写进程会发现默认模型及同目录的 `ggml-*.bin`，并在空闲时检查新增或更换的文件。无法加载、仅支持英语或验证超时的权重会给出对应状态。短测基于一秒静音，内存估算用于帮助选择模型。对于参考数据不足的模型，列表可显示「资源需求未知」。
+
+服务端会在领取任务前重查当前内存余量。低于推荐余量时可以尝试，明显不足时暂停领取该模型的任务。已排队任务会显示等待原因，恢复后自动继续。也可先在「转写设置」里选可用模型，再对受阻任务点击「改用所选模型」。普通重试仍沿用原任务模型。
+
+在**处理电脑**的 `backend` 目录运行以下命令。若服务使用自定义数据目录，请在同一终端设置相同的 `RECUE_DATA_DIR`：
+
+```text
+uv run --offline --locked python -m app.model_commands add "/path/to/model.bin"
+uv run --offline --locked python -m app.model_commands check ggml-large-v3-q5_0.bin
+uv run --offline --locked python -m app.model_commands disable ggml-large-v3-q5_0.bin
+uv run --offline --locked python -m app.model_commands enable ggml-large-v3-q5_0.bin
+```
+
+`add` 用于登记默认目录之外或非 `ggml-*.bin` 命名的本地文件。可用 `--name` 为同名文件指定不同的列表名称。`check` 请求转写进程在空闲时重新验证。停用设置保存在本地数据库，即时阻止新任务使用该模型，已领取的任务继续运行。
 
 服务端接收文件后，上传条目会在对应媒体出现在列表时收起。列表中的「已用」和「总耗时」从本次任务入队开始计算，包含排队时间。重试从新任务入队重新计时。识别时列表显示引擎上报的进度，Windows 还显示识别进程树占整机的 CPU 百分比和峰值提交内存。桌面阅读页可拖动播放器与讲稿之间的分隔条调节比例（20%–80%），也可聚焦后用左右方向键微调，双击分隔条恢复 60/40。比例在当前浏览器保存。窄屏采用上下布局。
 

@@ -1,17 +1,28 @@
+import * as Select from '@radix-ui/react-select';
 import { useEffect, useRef, useState } from 'react';
-import { ApiError, formatTime, message, request, upload, uploadId, type Health, type Media, type MediaPage, type Receipt } from '../../api/client';
+import { ApiError, formatTime, message, request, upload, uploadId, type Health, type Media, type MediaPage, type ModelAvailability, type Receipt } from '../../api/client';
 
 type Transfer = { id: string; mediaId?: string; name: string; progress: number; state: 'waiting' | 'uploading' | 'received' | 'uncertain' | 'failed'; error?: string };
 const stages: Record<string, string> = { preprocessing: '预处理中', transcribing: '转写中', organizing: '整理中', queued: '排队中', succeeded: '已完成', failed: '失败', interrupted: '中断', cancelled: '已取消' };
+const modelLabels: Record<ModelAvailability['status'], string> = {
+  available: '可用', below_recommended: '低于推荐配置', resource_unknown: '资源需求未知',
+  memory_insufficient: '内存暂不足', pending: '待验证', unsupported: '不支持',
+  check_failed: '检查失败', check_timeout: '检查超时', missing: '文件不可用',
+  disabled: '已停用', offline: '转写进程未就绪',
+};
+const memorySources: Record<NonNullable<ModelAvailability['memory_source']>, string> = {
+  reference: '参考估算', sampled_rss: '短测驻留内存估算', peak_commit: '短测提交内存估算',
+};
 function status(item: Media) {
   if (item.lifecycle !== 'active') return item.lifecycle === 'deleting' ? '删除中' : '删除失败';
   const job = item.latest_job;
+  if (job?.status === 'queued' && job.wait_reason) return '等待模型';
   return job ? stages[job.status === 'running' ? job.stage ?? 'running' : job.status] ?? '处理中' : '等待任务';
 }
 function TaskMetrics({ item }: { item: Media }) {
   const job = item.latest_job;
   if (item.lifecycle === 'deleting') return <>正在停止任务并清理文件</>;
-  const detail = item.delete_error ?? job?.error_message;
+  const detail = item.delete_error ?? job?.wait_reason ?? job?.error_message;
   if (!job) return <>{detail ?? '—'}</>;
   const running = job.status === 'running';
   const end = running ? Date.now() : job.finished_at;
@@ -19,7 +30,7 @@ function TaskMetrics({ item }: { item: Media }) {
     {detail && <span>{detail}<br /></span>}
     {end != null ? <span title="本次任务从入队到结束，包含排队时间">
       {running ? '已用' : '总耗时'} {formatTime(Math.max(0, end - job.created_at))}
-    </span> : job.status === 'queued' ? '等待后台处理' : '—'}
+    </span> : job.status === 'queued' && !detail ? '等待后台处理' : null}
     {running && job.stage === 'transcribing' && <>
       {job.model && ` · ${job.model}`}
       <progress aria-label="识别进度" value={job.progress_percent ?? undefined} max={100} />
@@ -29,8 +40,14 @@ function TaskMetrics({ item }: { item: Media }) {
     </>}
   </span>;
 }
+function ModelOption({ value, children, disabled }: { value: string; children: string; disabled?: boolean }) {
+  return <Select.Item value={value} className="model-option" disabled={disabled}>
+    <Select.ItemText>{children}</Select.ItemText>
+    <Select.ItemIndicator className="model-check" aria-hidden="true">✓</Select.ItemIndicator>
+  </Select.Item>;
+}
 export function Library({ health }: { health: Health | null }) {
-  const [models, setModels] = useState<string[] | null>(null);
+  const [models, setModels] = useState<ModelAvailability[] | null>(null);
   const [model, setModel] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [modelError, setModelError] = useState(false);
@@ -43,7 +60,7 @@ export function Library({ health }: { health: Health | null }) {
     setModelError(false);
     async function refresh() {
       try {
-        const available = await request<string[]>('/api/models', { signal: controller.signal });
+        const available = await request<ModelAvailability[]>('/api/models/status', { signal: controller.signal });
         if (!controller.signal.aborted) {
           setModels(available);
           setModelError(false);
@@ -59,11 +76,16 @@ export function Library({ health }: { health: Health | null }) {
     void refresh();
     return () => { controller.abort(); clearTimeout(timer); };
   }, [settingsOpen, workerReady]);
-  const modelUnavailable = !!model && models !== null && !models.includes(model);
-  const modelStatus = modelUnavailable ? '原选模型已不可用，请重新选择。' :
-    modelError ? '无法获取服务端模型，重新展开可重试。' :
+  const availableModels = models?.filter(entry => entry.selectable) ?? [];
+  const defaultModel = models?.find(entry => entry.is_default);
+  const defaultModelLabel = defaultModel ? `服务端默认（${defaultModel.name}）` : '服务端默认';
+  const chosenModel = model ? availableModels.find(entry => entry.name === model) : defaultModel;
+  const modelUnavailable = models !== null && (model ? !chosenModel :
+    !!defaultModel && !defaultModel.selectable && defaultModel.status !== 'offline');
+  const modelStatus = modelUnavailable ? (model ? '原选模型已不可用，请重新选择。' : '服务端默认模型当前不可用，请选择其他模型。') :
+    modelError ? '无法获取服务端模型，稍后自动重试。' :
     models === null ? '正在获取服务端模型…' :
-    models.length === 0 ? '服务端暂无可选模型。' : '';
+    availableModels.length === 0 ? '服务端暂无可选模型。' : '';
   const [page, setPage] = useState<MediaPage | null>(null);
   const [error, setError] = useState('');
   const [loadError, setLoadError] = useState('');
@@ -124,7 +146,7 @@ export function Library({ health }: { health: Health | null }) {
   async function select(files: FileList | null) {
     if (!files?.length || uploadLock.current) return;
     if (modelUnavailable) {
-      setError('原选模型已不可用，请在转写设置中重新选择。');
+      setError('当前模型不可用，请在转写设置中重新选择。');
       if (input.current) input.current.value = '';
       return;
     }
@@ -155,6 +177,26 @@ export function Library({ health }: { health: Health | null }) {
     catch (error) { setError(message(error)); }
     finally { actionLock.current = false; setBusy(''); }
   }
+  async function changeTaskModel(item: Media) {
+    if (actionLock.current) return;
+    if (!chosenModel?.selectable) {
+      setSettingsOpen(true);
+      setError('请先在转写设置中选择可用模型，再重试此操作。');
+      return;
+    }
+    actionLock.current = true; setBusy(item.id);
+    const queued = item.latest_job?.status === 'queued';
+    try {
+      await request(`/api/media/${item.id}/${queued ? 'model' : 'retry'}`, {
+        method: queued ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: chosenModel.name }),
+      });
+      setRevision(n => n + 1);
+      setError('');
+    } catch (error) { setError(message(error)); }
+    finally { actionLock.current = false; setBusy(''); }
+  }
   async function remove() {
     if (!deleting || actionLock.current) return;
     actionLock.current = true; setBusy(deleting.id);
@@ -173,16 +215,50 @@ export function Library({ health }: { health: Health | null }) {
     <div className="modal-actions"><button autoFocus disabled={!!busy} onClick={() => setDeleting(null)}>取消</button><button className="danger" disabled={!!busy} onClick={() => void remove()}>{busy ? '正在请求…' : '确认删除'}</button></div>
   </dialog><div className="title"><h1>媒体</h1><div className="upload-tools"><button className="primary" disabled={uploading} onClick={() => input.current?.click()}>↑ 上传音视频</button></div>
     <input ref={input} type="file" multiple hidden accept="audio/*,video/*,.mkv,.mov" onChange={event => void select(event.target.files)} /></div>
-    <details className="processing-settings" onToggle={event => setSettingsOpen(event.currentTarget.open)}>
+    <details className="processing-settings" open={settingsOpen} onToggle={event => setSettingsOpen(event.currentTarget.open)}>
       <summary>转写设置</summary>
-      <p className="muted">本次选择用于后续上传，重试沿用原任务的模型。</p>
-      <label className="model-choice">转写模型 <select disabled={uploading || (!model && !models?.length)}
-        aria-describedby="model-status" value={model} onChange={event => setModel(event.target.value)}>
-        <option value="">服务端默认</option>
-        {model && !models?.includes(model) && <option value={model} disabled>请选择可用模型</option>}
-        {models?.map(name => <option key={name} value={name}>{name}</option>)}
-      </select></label>
+      <p className="muted">本次选择用于后续上传。排队受阻的任务可改用所选模型。</p>
+      <div className="model-picker">
+        <label className="model-picker-label" htmlFor="transcription-model">转写模型</label>
+        <Select.Root value={model ? `model:${model}` : 'default'}
+          onValueChange={value => setModel(value === 'default' ? '' : value.slice('model:'.length))}
+          disabled={uploading || (!model && availableModels.length === 0)}>
+          <Select.Trigger id="transcription-model" className="model-trigger" aria-describedby="model-status">
+            <span className="model-trigger-value" title={model ? chosenModel?.name : defaultModel?.name}>
+              <Select.Value>{model ? chosenModel?.name ?? '请选择可用模型' : defaultModelLabel}</Select.Value>
+            </span>
+            <Select.Icon className="model-chevron" />
+          </Select.Trigger>
+          <Select.Portal>
+            <Select.Content className="model-menu" position="popper" align="start" sideOffset={6} collisionPadding={12}>
+              <Select.ScrollUpButton className="model-scroll">⌃</Select.ScrollUpButton>
+              <Select.Viewport>
+                <ModelOption value="default" disabled={!!defaultModel && !defaultModel.selectable}>
+                  {defaultModelLabel}
+                </ModelOption>
+                {model && !chosenModel &&
+                  <ModelOption value={`model:${model}`} disabled>请选择可用模型</ModelOption>}
+                {availableModels.map(entry =>
+                  <ModelOption key={entry.name} value={`model:${entry.name}`}>{entry.name}</ModelOption>)}
+              </Select.Viewport>
+              <Select.ScrollDownButton className="model-scroll">⌄</Select.ScrollDownButton>
+            </Select.Content>
+          </Select.Portal>
+        </Select.Root>
+      </div>
       <p id="model-status" className="muted" role="status" hidden={!modelStatus}>{modelStatus}</p>
+      {!!models?.length && <ul className="model-catalog" aria-label="模型可用性">
+        {models.map(entry => <li key={entry.name}>
+          <strong>{entry.name}</strong>
+          <div>{modelLabels[entry.status]}{entry.is_default && ' · 服务端默认'}
+            {!['available', 'disabled'].includes(entry.status) && ` · ${entry.message}`}</div>
+          {entry.required_memory_mib != null && <div>
+            {entry.memory_source && memorySources[entry.memory_source]} {entry.required_memory_mib} MiB
+            {entry.recommended_memory_mib != null && ` · 推荐可用 ${entry.recommended_memory_mib} MiB`}
+            {entry.available_memory_mib != null && ` · 处理电脑当前可用 ${entry.available_memory_mib} MiB`}
+          </div>}
+        </li>)}
+      </ul>}
     </details>
     <p className="workflow">上传音视频 → 等待转写 → 点击「阅读」。完成后可播放媒体、搜索讲稿，点击句子定位播放。</p>
     {health && !health.transcription_ready && <section className="processing-notice" role="status" aria-label="转写服务状态">
@@ -196,7 +272,9 @@ export function Library({ health }: { health: Health | null }) {
     {transfers.length > 0 && <section className="upload-panel" aria-label="上传任务"><h2>上传</h2>{transfers.map(row => <div key={row.id} className="upload-row"><div className="transfer-name"><span title={row.name}>{row.name}</span>{row.state === 'uploading' && <progress value={row.progress} max="100" aria-label={`${row.name} 上传进度`} />}{row.error && <p className="error">{row.error}</p>}</div><span className={`status task-status ${row.state === 'received' ? 'success' : ''}`}>{({ waiting: '等待', uploading: `${row.progress}%`, received: '上传完成', uncertain: '结果待查询', failed: '上传失败' })[row.state]}</span>{row.state === 'uncertain' && <button onClick={() => void queryReceipt(row.id)}>查询结果</button>}</div>)}<p className="muted">上传完成前请保持页面打开。后台转写进度见下方媒体列表。</p></section>}
     <div className="tabs" role="group" aria-label="媒体筛选">{[['all', '全部'], ['working', '处理中'], ['errors', '异常']].map(([value, label]) => <button key={value} className={tab === value ? 'selected' : ''} aria-pressed={tab === value} onClick={() => setTab(value)}>{label}</button>)}</div>
     {!page ? <div className="empty">正在加载媒体…</div> : <><div className="table"><div className="media-row table-head"><span>文件</span><span>时长</span><span>导入时间</span><span>处理详情</span><span>状态</span><span>操作</span></div>
-      {items.map(item => <div key={item.id} className="media-row"><div className="file"><span className="file-icon" aria-hidden="true">{item.media_type === 'audio' ? '♫' : '▷'}</span><span className="filename" title={item.display_name}>{item.display_name}</span></div><span className="num">{formatTime(item.duration_ms)}</span><time className="num">{new Date(item.created_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</time><div className="detail"><TaskMetrics item={item} /></div><span className={`status ${item.lifecycle === 'delete_failed' ? 'failure' : item.lifecycle !== 'active' ? '' : item.latest_job?.status === 'succeeded' ? 'success' : ['failed', 'interrupted'].includes(item.latest_job?.status ?? '') ? 'failure' : ''}`}>{status(item)}</span><div className="media-actions">{item.lifecycle === 'active' && item.latest_job?.status === 'succeeded' ? <a className="open" href={`#${item.id}`} onClick={event => { if (uploading) event.preventDefault(); }} aria-disabled={uploading}>阅读</a> : item.lifecycle === 'active' && ['failed', 'interrupted'].includes(item.latest_job?.status ?? '') ? <button disabled={!!busy} onClick={() => void retry(item)}>重试</button> : null}<button disabled={!!busy || item.lifecycle === 'deleting'} aria-label={`${item.lifecycle === 'delete_failed' ? '重试删除' : '删除'} ${item.display_name}`} title={item.lifecycle === 'delete_failed' ? '重试删除' : '删除'} onClick={() => setDeleting(item)}>{item.lifecycle === 'delete_failed' ? '重试删除' : '删除'}</button></div></div>)}
+      {items.map(item => <div key={item.id} className="media-row"><div className="file"><span className="file-icon" aria-hidden="true">{item.media_type === 'audio' ? '♫' : '▷'}</span><span className="filename" title={item.display_name}>{item.display_name}</span></div><span className="num">{formatTime(item.duration_ms)}</span><time className="num">{new Date(item.created_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</time><div className="detail"><TaskMetrics item={item} /></div><span className={`status ${item.lifecycle === 'delete_failed' ? 'failure' : item.lifecycle !== 'active' ? '' : item.latest_job?.status === 'succeeded' ? 'success' : ['failed', 'interrupted'].includes(item.latest_job?.status ?? '') ? 'failure' : ''}`}>{status(item)}</span><div className="media-actions">{item.lifecycle === 'active' && item.latest_job?.status === 'succeeded' ? <a className="open" href={`#${item.id}`} onClick={event => { if (uploading) event.preventDefault(); }} aria-disabled={uploading}>阅读</a> : item.lifecycle === 'active' && ['failed', 'interrupted'].includes(item.latest_job?.status ?? '') ? <button disabled={!!busy} onClick={() => void retry(item)}>重试</button> : null}{item.lifecycle === 'active' && (item.latest_job?.wait_reason ||
+        (['failed', 'interrupted'].includes(item.latest_job?.status ?? '') && item.latest_job?.requested_model)) &&
+        <button disabled={!!busy} onClick={() => void changeTaskModel(item)}>改用所选模型</button>}<button disabled={!!busy || item.lifecycle === 'deleting'} aria-label={`${item.lifecycle === 'delete_failed' ? '重试删除' : '删除'} ${item.display_name}`} title={item.lifecycle === 'delete_failed' ? '重试删除' : '删除'} onClick={() => setDeleting(item)}>{item.lifecycle === 'delete_failed' ? '重试删除' : '删除'}</button></div></div>)}
       {!items.length && <div className="empty">{page.items.length ? '没有符合筛选条件的媒体' : '还没有媒体，上传一份音视频开始复习。'}</div>}</div>
       {page.next_cursor && <button className="load-more" onClick={() => setLimit(n => n + 20)}>加载更多</button>}</>}
   </>;

@@ -28,7 +28,7 @@ class ProcessCancelled(RuntimeError):
     pass
 
 
-def run_tool(command, *, stdout, stderr, timeout, cancel=None, report=None):
+def run_tool(command, *, stdout, stderr, timeout, cancel=None, report=None, measure_memory=False):
     """Run an argument array with file-backed output, never a shell or a pipe.
 
     cancel is an optional threading.Event. Return only after the entire job is
@@ -45,7 +45,7 @@ def run_tool(command, *, stdout, stderr, timeout, cancel=None, report=None):
     if sys.platform == "darwin":
         from app._macos_process import run
 
-        return run(command, stdout, stderr, timeout, cancel, report, _outer_job.get())
+        return run(command, stdout, stderr, timeout, cancel, report, _outer_job.get(), measure_memory)
     if os.name != "nt":
         raise OSError("Contained tool execution requires Windows 10+ or macOS")
     from app._windows_process import ToolJob
@@ -66,6 +66,8 @@ def run_tool(command, *, stdout, stderr, timeout, cancel=None, report=None):
                 raise subprocess.TimeoutExpired(command, timeout)
             code = job.wait(50)
             if code is not None:
+                if measure_memory and report:
+                    report(None, job.resources()[1])
                 if code:
                     raise subprocess.CalledProcessError(code, command)
                 return

@@ -10,7 +10,7 @@ import sys
 import time
 
 
-def run(command, stdout, stderr, timeout, cancel, report, marker):
+def run(command, stdout, stderr, timeout, cancel, report, marker, measure_memory=False):
     from app.processes import ProcessCancelled, ProcessCleanupError
 
     if marker is not None:
@@ -35,7 +35,11 @@ def run(command, stdout, stderr, timeout, cancel, report, marker):
         raise
     with guardian.stdin, guardian.stdout:
         try:
-            next_report = time.monotonic() + 1
+            if measure_memory:
+                import psutil
+            interval = .1 if measure_memory else 1
+            next_report = time.monotonic() + interval
+            peak = 0
             while guardian.poll() is None:
                 if cancel is not None and cancel.is_set():
                     raise ProcessCancelled("Local processing cancelled")
@@ -44,8 +48,20 @@ def run(command, stdout, stderr, timeout, cancel, report, marker):
                 if remaining <= 0:
                     raise subprocess.TimeoutExpired(command, timeout)
                 if report and now >= next_report:
-                    report(None, None)
-                    next_report = now + 1
+                    if measure_memory:
+                        try:
+                            children = psutil.Process(guardian.pid).children(recursive=True)
+                            rss = 0
+                            for child in children:
+                                try:
+                                    rss += child.memory_info().rss
+                                except psutil.Error:
+                                    continue
+                            peak = max(peak, rss / 1024 ** 2)
+                        except psutil.Error:
+                            pass
+                    report(None, peak or None)
+                    next_report = now + interval
                 time.sleep(min(remaining, .05))
         finally:
             guardian.stdin.close()
