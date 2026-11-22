@@ -17,8 +17,8 @@ from app.media.prepare import PreparationError, prepare
 from app.processes import ProcessCancelled
 
 
-@unittest.skipUnless(sys.platform == "win32" and shutil.which("ffmpeg") and shutil.which("ffprobe"),
-                     "Windows FFmpeg/FFprobe required")
+@unittest.skipUnless(sys.platform in ("win32", "darwin") and shutil.which("ffmpeg") and shutil.which("ffprobe"),
+                     "FFmpeg/FFprobe on Windows or macOS required")
 class PreparationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="ReCue 媒体 ")

@@ -27,7 +27,8 @@ def upload_router(settings):
     errors = {code: {"model": ErrorResponse} for code in (400, 403, 408, 409, 410, 413, 415, 422, 503, 507)}
 
     @router.get("/api/models", response_model=list[str])
-    def models():
+    def models(response: Response):
+        response.headers["Cache-Control"] = "no-store"
         return configured_models(settings)
 
     @router.post("/api/media", response_model=UploadReceipt, status_code=201,

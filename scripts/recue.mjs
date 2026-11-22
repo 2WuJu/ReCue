@@ -10,6 +10,7 @@ import { parseArgs } from 'node:util';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const windows = process.platform === 'win32';
+const supportsWorker = windows || process.platform === 'darwin';
 const usage = `Usage: node scripts/recue.mjs <setup|launch|start|stop> [--service all|api|worker]
 
 setup   Install locked Python/npm dependencies and build the frontend (network required).
@@ -17,8 +18,8 @@ launch  Configure local transcription interactively and start services.
 start   Run in the foreground using uv --offline --locked (default service: all).
 stop    Request shutdown; use the same --service and RECUE_DATA_DIR as start.
 
-The entry point works on Windows, macOS and Linux. Transcription currently requires
-Windows 10+. On macOS/Linux use start --service api for API/UI development only.`;
+Transcription supports Windows 10+ and macOS. On Linux use start --service api
+for API/UI development.`;
 
 function run(command, args, cwd = root, onSignal) {
   return new Promise((accept, reject) => {
@@ -84,8 +85,8 @@ async function main() {
     console.log(`Stop requested for launcher '${service}'; wait for the start terminal to exit.`);
   };
   if (action === 'stop') return requestStop();
-  if (action !== 'setup' && !windows && service !== 'api') {
-    throw new Error('Transcription requires Windows 10+ (Job Object containment). Use start --service api for API/UI development on this platform.');
+  if (action !== 'setup' && !supportsWorker && service !== 'api') {
+    throw new Error('Transcription requires Windows 10+ or macOS. Use start --service api for API/UI development on this platform.');
   }
   const uv = await uvCommand();
   const python = join(root, '.venv', windows ? 'Scripts/python.exe' : 'bin/python');

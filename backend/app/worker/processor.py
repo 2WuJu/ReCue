@@ -2,7 +2,7 @@
 import json
 import threading
 import re
-from app.worker.configuration import select_model
+from app.worker.configuration import ModelUnavailable, select_model
 
 from app.media.prepare import PreparationError, prepare
 from app.processes import ProcessCancelled
@@ -54,8 +54,9 @@ def process_attempt(settings, config, job, stop):
     try:
         if not row:
             raise ProcessCancelled("Attempt no longer owned")
-        source = (settings.data_dir / row["source_path"]).resolve()
-        source.relative_to(settings.data_dir / "media")
+        data_dir = settings.data_dir.resolve()
+        source = (data_dir / row["source_path"]).resolve()
+        source.relative_to(data_dir / "media")
         work = settings.data_dir / "media" / job["media_id"] / "attempts" / job["id"]
         config = select_model(config, job.get("requested_model"))
         with connect(database) as db, db:
@@ -95,9 +96,13 @@ def process_attempt(settings, config, job, stop):
                         "worker_stopped" if stop.is_set() else "attempt_cancelled",
                         "处理已停止，请重试" if stop.is_set() else "处理已取消",
                         job["id"], owner))
-    except (PreparationError, TranscriptionError, OSError, ValueError):
+    except (PreparationError, TranscriptionError, OSError, ValueError) as exc:
+        if isinstance(exc, ModelUnavailable):
+            code, message = "model_unavailable", "此任务的转写模型不可用，请在处理电脑恢复该模型后重试"
+        else:
+            code, message = "processing_failed", "媒体处理失败，请查看私有任务日志"
         try:
-            fail_owned(database, job["id"], owner, "processing_failed", "媒体处理失败，请查看私有任务日志")
+            fail_owned(database, job["id"], owner, code, message)
         except QueueConflict:
             if owned(database, job, owner):
                 raise

@@ -29,7 +29,8 @@ export async function configureProcessing(root) {
     const terminal = createInterface({ input: process.stdin, crlfDelay: Infinity });
     try {
       const lines = terminal[Symbol.asyncIterator]();
-      const executable = await filePath(lines, 'whisper-cli.exe 在哪里？ ');
+      const cli = process.platform === 'win32' ? 'whisper-cli.exe' : 'whisper-cli';
+      const executable = await filePath(lines, `${cli} 在哪里？ `);
       const model = await filePath(lines, '多语言 GGML 模型文件在哪里？ ');
       console.log('正在计算文件哈希…');
       const settings = {

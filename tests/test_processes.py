@@ -19,6 +19,76 @@ from app.processes import ProcessCancelled, run_tool
 FIXTURE = str(Path(__file__).with_name("process_fixture.py"))
 
 
+@unittest.skipUnless(sys.platform == "darwin", "macOS process containment")
+class MacProcessTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="ReCue process 测试 ")
+        self.addCleanup(temporary.cleanup)
+        self.directory = Path(temporary.name)
+
+    def tree_pids(self):
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            files = list(self.directory.glob("*.pid"))
+            contents = [file.read_text() for file in files]
+            if len(contents) == 3 and all(contents):
+                return [int(pid) for pid in contents]
+            time.sleep(.02)
+        self.fail("Three-level process tree did not start")
+
+    def assert_exited(self, pids):
+        for pid in pids:
+            with self.assertRaises(ProcessLookupError):
+                os.kill(pid, 0)
+
+    def test_guardian_drains_after_worker_hard_kill(self):
+        from app.worker.containment import await_cleanup
+
+        worker = subprocess.Popen([sys.executable, FIXTURE, "guarded-host", str(self.directory)])
+        try:
+            pids = self.tree_pids()
+            self.assertTrue((self.directory / "processing.guard").exists())
+        finally:
+            worker.kill()
+            worker.wait(timeout=5)
+        await_cleanup(self.directory, timeout=10)
+        self.assert_exited(pids)
+
+    def run_tree(self, mode, timeout, cancel=None):
+        from concurrent.futures import ThreadPoolExecutor
+
+        pool = ThreadPoolExecutor(max_workers=1)
+        self.addCleanup(pool.shutdown)
+
+        def run():
+            with (self.directory / "log").open("wb") as log:
+                run_tool([sys.executable, FIXTURE, mode, str(self.directory)], stdout=log,
+                         stderr=log, timeout=timeout, cancel=cancel)
+
+        future = pool.submit(run)
+        return future, self.tree_pids()
+
+    def test_exit_and_timeout_drain_descendants(self):
+        future, pids = self.run_tree("root-exit", 5)
+        (self.directory / "release-root").touch()
+        future.result(timeout=10)
+        self.assert_exited(pids)
+        for file in self.directory.glob("*.pid"):
+            file.unlink()
+        future, pids = self.run_tree("root", 2)
+        with self.assertRaises(subprocess.TimeoutExpired):
+            future.result(timeout=10)
+        self.assert_exited(pids)
+
+    def test_cancel_drains_descendants(self):
+        cancel = threading.Event()
+        future, pids = self.run_tree("root", 10, cancel)
+        cancel.set()
+        with self.assertRaises(ProcessCancelled):
+            future.result(timeout=10)
+        self.assert_exited(pids)
+
+
 @unittest.skipUnless(os.name == "nt", "Windows process containment")
 class ProcessTests(unittest.TestCase):
     def setUp(self):

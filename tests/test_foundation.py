@@ -56,7 +56,8 @@ class FoundationTests(unittest.TestCase):
             path = Path(directory) / "test.sqlite3"
             migrate(path)
             with connect(path) as db, db:
-                db.execute("INSERT INTO worker_status VALUES (1, 'existing', 1, 0, 'stopped')")
+                db.execute("""INSERT INTO worker_status (singleton, worker_id, pid, heartbeat, state)
+                              VALUES (1, 'existing', 1, 0, 'stopped')""")
             migrate(path)
             with connect(path) as db:
                 self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], MIGRATIONS[-1][0])

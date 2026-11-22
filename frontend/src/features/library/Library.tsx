@@ -30,9 +30,40 @@ function TaskMetrics({ item }: { item: Media }) {
   </span>;
 }
 export function Library({ health }: { health: Health | null }) {
-  const [models, setModels] = useState<string[]>([]);
+  const [models, setModels] = useState<string[] | null>(null);
   const [model, setModel] = useState('');
-  useEffect(() => { request<string[]>('/api/models').then(setModels).catch(e => setError(message(e))); }, []);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [modelError, setModelError] = useState(false);
+  const workerReady = health?.transcription_ready;
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const controller = new AbortController();
+    let timer: number;
+    setModels(null);
+    setModelError(false);
+    async function refresh() {
+      try {
+        const available = await request<string[]>('/api/models', { signal: controller.signal });
+        if (!controller.signal.aborted) {
+          setModels(available);
+          setModelError(false);
+        }
+      } catch {
+        if (!controller.signal.aborted) {
+          setModels(null);
+          setModelError(true);
+        }
+      }
+      if (!controller.signal.aborted) timer = window.setTimeout(refresh, 5000);
+    }
+    void refresh();
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [settingsOpen, workerReady]);
+  const modelUnavailable = !!model && models !== null && !models.includes(model);
+  const modelStatus = modelUnavailable ? '原选模型已不可用，请重新选择。' :
+    modelError ? '无法获取服务端模型，重新展开可重试。' :
+    models === null ? '正在获取服务端模型…' :
+    models.length === 0 ? '服务端暂无可选模型。' : '';
   const [page, setPage] = useState<MediaPage | null>(null);
   const [error, setError] = useState('');
   const [loadError, setLoadError] = useState('');
@@ -92,6 +123,11 @@ export function Library({ health }: { health: Health | null }) {
   }
   async function select(files: FileList | null) {
     if (!files?.length || uploadLock.current) return;
+    if (modelUnavailable) {
+      setError('原选模型已不可用，请在转写设置中重新选择。');
+      if (input.current) input.current.value = '';
+      return;
+    }
     if (files.length > 5) { setError('每批最多选择 5 个文件'); return; }
     const selected = Array.from(files);
     if (selected.some(file => file.size === 0 || file.size > 4 * 1024 ** 3)) { setError('请选择非空且不超过 4GB 的文件'); return; }
@@ -137,13 +173,23 @@ export function Library({ health }: { health: Health | null }) {
     <div className="modal-actions"><button autoFocus disabled={!!busy} onClick={() => setDeleting(null)}>取消</button><button className="danger" disabled={!!busy} onClick={() => void remove()}>{busy ? '正在请求…' : '确认删除'}</button></div>
   </dialog><div className="title"><h1>媒体</h1><div className="upload-tools"><button className="primary" disabled={uploading} onClick={() => input.current?.click()}>↑ 上传音视频</button></div>
     <input ref={input} type="file" multiple hidden accept="audio/*,video/*,.mkv,.mov" onChange={event => void select(event.target.files)} /></div>
-    <details className="processing-settings"><summary>转写设置</summary><p className="muted">上传后自动生成讲稿。此设置仅用于后续上传，已有媒体及重试仍沿用原模型。</p><label className="model-choice">转写模型 <select disabled={uploading} value={model} onChange={e => setModel(e.target.value)}><option value="">服务端默认</option>{models.map(name => <option key={name}>{name}</option>)}</select></label></details>
+    <details className="processing-settings" onToggle={event => setSettingsOpen(event.currentTarget.open)}>
+      <summary>转写设置</summary>
+      <p className="muted">本次选择用于后续上传，重试沿用原任务的模型。</p>
+      <label className="model-choice">转写模型 <select disabled={uploading || (!model && !models?.length)}
+        aria-describedby="model-status" value={model} onChange={event => setModel(event.target.value)}>
+        <option value="">服务端默认</option>
+        {model && !models?.includes(model) && <option value={model} disabled>请选择可用模型</option>}
+        {models?.map(name => <option key={name} value={name}>{name}</option>)}
+      </select></label>
+      <p id="model-status" className="muted" role="status" hidden={!modelStatus}>{modelStatus}</p>
+    </details>
     <p className="workflow">上传音视频 → 等待转写 → 点击「阅读」。完成后可播放媒体、搜索讲稿，点击句子定位播放。</p>
     {health && !health.transcription_ready && <section className="processing-notice" role="status" aria-label="转写服务状态">
       <h2>{health.worker.status === 'blocked_config' ? '转写配置缺失或无效' : health.worker.status === 'offline' ? '转写进程未运行或已失联' : '转写服务尚未就绪'}</h2>
       <p>现在上传只会保存文件并排队，不会生成讲稿。已接收的文件无需重新上传。服务恢复后，排队任务会自动开始；标为「中断」的任务请点击「重试」。</p>
       {health.worker.status === 'blocked_config' ? <p>请检查 processing.local.json 或启动终端中 <code>RECUE_PROCESSING_CONFIG</code>，按 README 的「首次启动」准备 whisper.cpp 和模型、核对配置及文件哈希，再停止并重新启动服务。具体校验错误见启动终端。</p>
-        : <p>请检查启动终端输出；若进程已退出，运行 <code>node scripts/recue.mjs launch</code> 同时启动网页与转写进程。仅启动 API 无法转写；macOS/Linux 当前仅支持 API 与界面开发。</p>}
+        : <p>请检查启动终端输出。如果转写进程已退出，可在 Windows 或 macOS 上运行 <code>node scripts/recue.mjs launch</code> 启动完整服务。</p>}
     </section>}
     {loadError && <p role="alert" className="error">{loadError} · 正在重连，列表可能不是最新状态。 <button onClick={() => setRevision(n => n + 1)}>重新连接</button></p>}
     {error && <p role="alert" className="error">{error} <button onClick={() => setError('')}>关闭提示</button></p>}

@@ -2,7 +2,7 @@
 
 **上传本地音视频，生成可点击定位的讲稿。** 用来回看课程、搜索原话、边听边复习。
 
-媒体、讲稿和识别计算都留在你的电脑上，浏览器负责操作。当前为 **0.1 开发版，完整转写需要 Windows 10+**。
+媒体、讲稿和识别计算都留在你的电脑上，浏览器负责操作。当前为 **0.1 开发版，支持 Windows 10+ 和 macOS 本地转写**。
 
 ## 从上传到阅读
 
@@ -49,19 +49,30 @@ sequenceDiagram
 
 ## 首次启动
 
-在 Windows 10 或更新版本上准备以下工具。
+在处理电脑上准备以下工具。
 
 | 准备什么 | 要求 |
 | --- | --- |
 | [Node.js 与 npm](https://nodejs.org/)、[uv](https://docs.astral.sh/uv/getting-started/installation/) | Node 20.19+ 或 22.12+，uv 管理 Python |
 | [FFmpeg 与 FFprobe](https://ffmpeg.org/download.html) | 两者都加入 PATH，FFmpeg 支持 libx264 和 AAC |
-| [whisper.cpp](https://github.com/ggml-org/whisper.cpp) | Windows 版 whisper-cli.exe 和配套 DLL，以及一个支持中文的多语言 GGML 模型 |
+| [whisper.cpp](https://github.com/ggml-org/whisper.cpp) | 适用于当前系统的 `whisper-cli` 和配套运行库，以及一个支持中文的多语言 GGML 模型 |
 
-1. **双击项目根目录的 `Start.cmd`**。首次启动会联网安装项目依赖并构建网页。
-2. 按提示输入 **whisper-cli.exe 路径**和**模型文件路径**。脚本计算哈希、保存配置，然后启动服务。
+1. Windows 可双击项目根目录的 `Start.cmd`。macOS 在项目根目录运行 `bash scripts/start.sh`。首次启动会联网安装项目依赖并构建网页。
+2. 按提示输入 **whisper-cli 路径**（Windows 为 `whisper-cli.exe`）和**模型文件路径**。脚本计算哈希、保存配置，然后启动服务。
 3. 打开[本机首页](http://127.0.0.1:4318/)，看到「转写服务就绪」即可上传。使用期间保持启动窗口打开。
 
-以后双击同一个文件即可复用配置。在命令提示符、PowerShell 或 Bash 中，也可以从项目根目录运行 `node scripts/recue.mjs launch`。原有的 `bash scripts/start.sh` 继续可用。
+已有依赖和配置时，再次启动会直接复用。在命令提示符、PowerShell 或 Bash 中，也可以从项目根目录运行 `node scripts/recue.mjs launch`。
+
+macOS 上可以用 Homebrew 准备 [FFmpeg Full](https://formulae.brew.sh/formula/ffmpeg-full) 和 [whisper.cpp](https://formulae.brew.sh/formula/whisper.cpp)。准备好 Node.js、uv 和模型后，从项目根目录执行：
+
+```bash
+brew install ffmpeg-full whisper.cpp
+export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"
+command -v whisper-cli
+bash scripts/start.sh
+```
+
+按提示填写 `command -v whisper-cli` 输出的路径。使用其他来源的原生二进制时，把 `ffmpeg` 和 `ffprobe` 放在 PATH 中，并确认 FFmpeg 提供 `libx264` 和 AAC 编码器。macOS 与 Windows 均使用 Whisper CPU 后端。
 
 ## 上传了，为什么没有讲稿？
 
@@ -102,7 +113,7 @@ node scripts/recue.mjs stop
 
 支持本地音视频上传、后台转写、讲稿搜索、点击定位、播放跟随、进度恢复与媒体删除。工程上限为单文件 4 GiB、120 分钟，实际可处理格式取决于编码和音轨。识别质量、句首精度、单文件 60 分钟、不同内容的 5 文件组合、第二台电脑及完整离线流程仍待验收。
 
-macOS/Linux 目前仅能用 `node scripts/recue.mjs start --service api` 开发 API 与界面，自动转写暂不支持。
+Linux 可用 `node scripts/recue.mjs start --service api` 开发 API 与界面。
 
 开发目录：`frontend/src/` 为 React + TypeScript 界面，`backend/app/` 为 API 与处理逻辑，`scripts/` 为启动入口，`tests/` 为后端测试。修改后可运行：
 

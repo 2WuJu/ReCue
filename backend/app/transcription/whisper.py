@@ -40,6 +40,23 @@ def parse_result(payload, duration_ms):
     return segments
 
 
+def whisper_command(audio, model, executable):
+    return [str(executable), "-m", str(model), "-f", str(audio), "-l", "zh",
+            "-t", "8", "-p", "1", "-ng"]
+
+
+def probe_model(audio, model, executable, output_dir, cancel):
+    prefix = output_dir / "probe"
+    output = prefix.with_suffix(".json")
+    output.unlink(missing_ok=True)
+    command = [*whisper_command(audio, model, executable), "-ojf", "-of", str(prefix)]
+    with (output_dir / "probe.log").open("wb") as log:
+        run_tool(command, stdout=log, stderr=log, timeout=60, cancel=cancel)
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    if payload["model"]["multilingual"] is not True or payload["result"]["language"] != "zh":
+        raise TranscriptionError("Whisper model must support Chinese transcription")
+
+
 def transcribe(audio: Path, model: Path, executable: Path, output_dir: Path,
                duration_ms: int, *, timeout=4 * 60 * 60, cancel=None, report=None):
     """Run one real file, retaining raw evidence in a new private work directory.
@@ -53,8 +70,7 @@ def transcribe(audio: Path, model: Path, executable: Path, output_dir: Path,
             raise TranscriptionError("Audio, model and executable must be existing absolute files")
     output_dir.mkdir(parents=True, exist_ok=False)
     prefix = output_dir / "result"
-    command = [str(executable), "-m", str(model), "-f", str(audio), "-l", "zh",
-               "-t", "8", "-p", "1", "-ng", "-pp", "-oj", "-of", str(prefix)]
+    command = [*whisper_command(audio, model, executable), "-pp", "-oj", "-of", str(prefix)]
     # No -d truncation: the input file is the exact processing boundary.
     try:
         with (output_dir / "stdout.log").open("xb") as stdout, (output_dir / "stderr.log").open("xb") as stderr:

@@ -19,13 +19,15 @@ ENTRY = ROOT / "scripts" / "recue.mjs"
 @unittest.skipUnless(shutil.which("node"), "Node.js required for public launcher")
 class ScriptTests(unittest.TestCase):
     def test_start_stop_from_unrelated_directory(self):
-        services = ("api", "all") if os.name == "nt" else ("api",)
+        services = ("api", "all") if sys.platform in ("win32", "darwin") else ("api",)
+        port = 0
         for service in services:
             with self.subTest(service=service), tempfile.TemporaryDirectory(prefix="recue scripts ") as directory:
                 data = Path(directory) / "custom data"
-                with socket.socket() as sock:
-                    sock.bind(("127.0.0.1", 0))
-                    port = sock.getsockname()[1]
+                if not port or sys.platform != "darwin":
+                    with socket.socket() as sock:
+                        sock.bind(("127.0.0.1", 0))
+                        port = sock.getsockname()[1]
                 env = {**os.environ, "RECUE_DATA_DIR": str(data), "RECUE_PORT": str(port),
                        "RECUE_HOST": "127.0.0.1", "RECUE_PROCESSING_CONFIG": ""}
                 command = ["node", str(ENTRY)]

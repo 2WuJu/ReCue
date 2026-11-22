@@ -17,6 +17,7 @@ from app.errors import ServiceError
 from app.repositories.database import connect, migrate
 from app.storage.uploads import recover_uploads
 from app.services.maintenance import maintain_deletions, maintain_uploads
+from app.worker.configuration import WORKER_HEARTBEAT_TTL
 
 
 class WorkerHealth(BaseModel):
@@ -86,7 +87,7 @@ def create_app(settings: Settings | None = None):
             row = db.execute("SELECT * FROM worker_status WHERE singleton=1").fetchone()
         age = max(0, time.time() - row["heartbeat"]) if row else None
         state = "offline"
-        if row and row["state"] != "stopped" and age < 10:
+        if row and row["state"] != "stopped" and age < WORKER_HEARTBEAT_TTL:
             state = row["state"]
         return Health(status="ok", database="ok",
                       worker=WorkerHealth(status=state, heartbeat_age_seconds=age),

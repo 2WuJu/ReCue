@@ -10,7 +10,7 @@ from threading import Lock
 
 from app.config import ROOT
 from app.errors import ServiceError
-from app.processes import run_tool
+from app.processes import ProcessCleanupError, run_tool
 from app.repositories.transcripts import get_transcript
 from app.transcription.article import FORMAT_VERSION
 
@@ -46,7 +46,7 @@ class ArticleFormatter:
                                   str(model.resolve()), str(source), str(output)],
                                  stdout=log, stderr=log, timeout=120)
                     paragraphs = json.loads(output.read_text(encoding="utf-8"))
-                except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                except (OSError, ValueError, subprocess.SubprocessError, ProcessCleanupError) as exc:
                     raise ServiceError(503, "article_failed", "本地文字稿整理失败，请检查标点模型并重试。原始讲稿仍可阅读。", True) from exc
                 result = {"media_id": media_id, "version": transcript["version"],
                           "model": FORMAT_VERSION, "paragraphs": paragraphs}

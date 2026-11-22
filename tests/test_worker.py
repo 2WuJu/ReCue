@@ -17,7 +17,7 @@ from app.media.prepare import PreparedMedia, PreparationError
 from app.processes import ProcessCleanupError
 from app.repositories.database import connect, migrate
 from app.repositories.queue import claim_next, received
-from app.worker.configuration import ProcessingConfig, load_processing
+from app.worker.configuration import ProcessingConfig, file_signature, load_processing
 from app.worker.processor import process_attempt
 
 
@@ -37,7 +37,8 @@ class WorkerTests(unittest.TestCase):
                  display_name="fixture", source_path=source.relative_to(self.data).as_posix(), size_bytes=16)
         self.snapshot = dict(engine="whisper.cpp", model_name="fixture", backend="cpu",
                              processing_version="test", timeline_mapping="source_pts_seconds - source_origin_seconds")
-        self.config = ProcessingConfig(source, source, "ffmpeg", "ffprobe", self.snapshot)
+        models = {source.name: {"path": str(source), "signature": file_signature(source)}}
+        self.config = ProcessingConfig(source, source, "ffmpeg", "ffprobe", self.snapshot, models)
         self.job = claim_next(self.settings.database, "owner", configuration=self.snapshot)
         self.stop = threading.Event()
 
@@ -96,6 +97,13 @@ class WorkerTests(unittest.TestCase):
     def test_missing_configuration_never_silently_selects_model(self):
         with self.assertRaisesRegex(ValueError, "RECUE_PROCESSING_CONFIG"):
             load_processing(self.settings)
+
+    def test_removed_selection_cannot_fall_back_to_default(self):
+        with patch("app.worker.processor.prepare") as prepare:
+            process_attempt(self.settings, self.config,
+                            {**self.job, "requested_model": "removed.bin"}, self.stop)
+        prepare.assert_not_called()
+        self.assertEqual(self.row("jobs")["error_code"], "model_unavailable")
 
     def test_configuration_checks_hashes_and_records_actual_fixed_parameters(self):
         resource = self.data / "resource"

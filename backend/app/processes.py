@@ -1,13 +1,9 @@
-"""Bounded Windows tool execution. Every child belongs to a kill-on-close job.
-
-Creation-time JOB_LIST assignment closes the orphan window between spawning a
-process and assigning it to a job. Only the three standard handles are inherited;
-in particular, children cannot keep the job alive after their owner is killed.
-"""
+"""Bounded tool execution using Windows jobs or supervised macOS process groups."""
 import math
 import os
 from pathlib import Path
 import subprocess
+import sys
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -37,17 +33,21 @@ def run_tool(command, *, stdout, stderr, timeout, cancel=None, report=None):
 
     cancel is an optional threading.Event. Return only after the entire job is
     empty, including descendants left behind by a successfully exited root.
-    Windows 10+ is required; never fall back to uncontained execution.
+    Supported on Windows 10+ and macOS.
     """
     if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("Tool timeout must be finite and positive")
     if cancel is not None and cancel.is_set():
         raise ProcessCancelled("Local processing cancelled")
-    if os.name != "nt":
-        raise OSError("Contained tool execution requires Windows 10 or newer")
     executable = Path(command[0])
     if not executable.is_absolute() or not executable.is_file():
         raise ValueError("Tool executable must be an existing absolute file")
+    if sys.platform == "darwin":
+        from app._macos_process import run
+
+        return run(command, stdout, stderr, timeout, cancel, report, _outer_job.get())
+    if os.name != "nt":
+        raise OSError("Contained tool execution requires Windows 10+ or macOS")
     from app._windows_process import ToolJob
 
     deadline = time.monotonic() + timeout

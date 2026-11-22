@@ -16,12 +16,17 @@ def await_cleanup(runtime, timeout=15):
     marker = runtime / "processing.guard"
     while marker.exists():
         if time.monotonic() >= deadline:
-            raise ProcessCleanupError("Previous tool cleanup is unconfirmed; inspect runtime/guardian.log")
+            raise ProcessCleanupError(f"Previous tool cleanup is unconfirmed; inspect {marker} and tool logs")
         time.sleep(0.05)
 
 
 @contextmanager
 def containment(runtime):
+    if sys.platform == "darwin":
+        # Each tool's guardian clears the marker after its own group drains.
+        with tool_scope(runtime / "processing.guard"):
+            yield None
+        return
     from app import _windows_process as win
     name = "Local\\ReCue-" + str(uuid4())
     marker = runtime / "processing.guard"

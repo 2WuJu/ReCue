@@ -2,7 +2,6 @@
 import asyncio
 import errno
 import json
-from dataclasses import replace
 import os
 from pathlib import Path
 import socket
@@ -28,6 +27,7 @@ from app.repositories.database import connect, migrate
 from app.repositories.queue import find_receipt, received, retry
 from app.services.uploads import receive_upload
 from app.storage.uploads import recover_uploads, upload_lock
+from app.worker.configuration import configured_models, file_signature
 
 
 class StorageTests(unittest.IsolatedAsyncioTestCase):
@@ -57,9 +57,14 @@ class StorageTests(unittest.IsolatedAsyncioTestCase):
     async def test_model_selection_survives_retry_and_receipt_replay(self):
         model = self.data / "ggml-test.bin"
         model.touch()
-        config = self.data / "processing.json"
-        config.write_text(json.dumps({"model": str(model)}), encoding="utf-8")
-        settings = replace(self.settings, processing_config=config)
+        settings = self.settings
+        catalog = json.dumps([dict(name=model.name, path=str(model), signature=file_signature(model))])
+        with connect(settings.database) as db, db:
+            db.execute("INSERT INTO worker_status VALUES (1, 'fixture', 1, ?, 'processing', ?)", (0, catalog))
+        self.assertEqual(configured_models(settings), [])
+        with connect(settings.database) as db, db:
+            db.execute("UPDATE worker_status SET heartbeat=?", (time.time(),))
+        self.assertEqual(configured_models(settings), [model.name])
         request_id = str(uuid4())
         body = [{"type": "http.request", "body": b"media"}]
         with self.assertRaises(ServiceError) as error:
@@ -73,6 +78,7 @@ class StorageTests(unittest.IsolatedAsyncioTestCase):
         with connect(settings.database) as db:
             self.assertEqual([r[0] for r in db.execute("SELECT requested_model FROM jobs")], [model.name] * 2)
         model.unlink()
+        self.assertEqual(configured_models(settings), [])
         self.assertEqual(await receive_upload(self.request([]), settings, request_id, "clip", model=model.name),
                          (receipt, False))
 

@@ -65,6 +65,7 @@ class ProgressHTTPTests(HTTPAPICase):
         self.prepare()
         self.publish()
         with connect(self.database) as db, db:
+            db.execute('ALTER TABLE worker_status DROP COLUMN models_json')
             for column in ('requested_model', 'cpu_percent', 'peak_memory_mib', 'progress_percent'):
                 db.execute(f'ALTER TABLE jobs DROP COLUMN {column}')
             db.execute('DROP TABLE deleted_uploads')

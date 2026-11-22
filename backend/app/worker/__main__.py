@@ -1,4 +1,5 @@
 import logging
+import json
 import os
 import signal
 import threading
@@ -7,10 +8,11 @@ from uuid import uuid4
 
 from app.config import Settings
 from app.locking import instance_lock
+from app.processes import ProcessCancelled
 from app.repositories.database import connect, migrate
 from app.worker.recovery import interrupt_previous_jobs
 from app.worker.containment import await_cleanup, containment
-from app.worker.configuration import load_processing
+from app.worker.configuration import load_processing, verify_models
 from app.worker.processor import process_attempt
 from app.repositories.queue import claim_next
 
@@ -28,28 +30,41 @@ def main():
         recovered = interrupt_previous_jobs(settings.database)
         worker_id = str(uuid4())
 
+        model_catalog = "[]"
+
         def heartbeat(state):
             with connect(settings.database) as db, db:
                 db.execute(
-                    "INSERT OR REPLACE INTO worker_status VALUES (1, ?, ?, ?, ?)",
-                    (worker_id, os.getpid(), time.time(), state),
+                    """INSERT OR REPLACE INTO worker_status
+                       (singleton, worker_id, pid, heartbeat, state, models_json)
+                       VALUES (1, ?, ?, ?, ?, ?)""",
+                    (worker_id, os.getpid(), time.time(), state, model_catalog if state == "processing" else "[]"),
                 )
+
+        def blocked(exc):
+            logging.error("Processing configuration unavailable: %s", exc)
+            while not stop.is_set():
+                heartbeat("blocked_config")
+                stop.wait(2)
+            heartbeat("stopped")
 
         logging.info("Worker started; interrupted %s old jobs", recovered)
         try:
+            heartbeat("idle")
             try:
                 config = load_processing(settings)
             except (ValueError, OSError, KeyError, TypeError) as exc:
-                logging.error("Processing configuration unavailable: %s", exc)
-                while not stop.is_set():
-                    heartbeat("blocked_config")
-                    stop.wait(2)
-                heartbeat("stopped")
-                return
+                return blocked(exc)
             with containment(settings.data_dir / "runtime") as guardian:
+                try:
+                    config = verify_models(settings, config, stop)
+                except ValueError as exc:
+                    return blocked(exc)
+                model_catalog = json.dumps(list(config.models.values()))
+
                 def pulse():
                     while not stop.wait(2):
-                        if guardian.poll() is not None:
+                        if guardian is not None and guardian.poll() is not None:
                             stop.set()
                             return
                         heartbeat("processing")
@@ -57,7 +72,7 @@ def main():
                 pulse_thread.start()
                 try:
                     while not stop.is_set():
-                        if guardian.poll() is not None:
+                        if guardian is not None and guardian.poll() is not None:
                             raise RuntimeError("Cleanup guardian exited unexpectedly")
                         heartbeat("processing")
                         job = claim_next(settings.database, worker_id, configuration=config.snapshot)
@@ -68,6 +83,8 @@ def main():
                 finally:
                     stop.set()
                     pulse_thread.join()
+        except ProcessCancelled:
+            heartbeat("stopped")
         except BaseException:
             heartbeat("error")
             raise

@@ -102,6 +102,7 @@ MIGRATIONS = [
         "ALTER TABLE jobs ADD COLUMN cpu_percent REAL",
         "ALTER TABLE jobs ADD COLUMN peak_memory_mib REAL",
     ]),
+    (8, ["ALTER TABLE worker_status ADD COLUMN models_json TEXT NOT NULL DEFAULT '[]'"]),
 ]
 
 
