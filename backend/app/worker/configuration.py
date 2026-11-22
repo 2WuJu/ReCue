@@ -13,6 +13,7 @@ from tempfile import TemporaryDirectory
 import time
 import wave
 
+from app.config import ROOT
 from app.repositories.database import connect
 from app.transcription import qwen3
 from app.transcription.segments import UnsupportedModel
@@ -147,9 +148,11 @@ def probe_entry(config, work, audio, entry, stop):
         aligner = Path(runtime["aligner"])
         qwen3.check_checkpoint(path)
         qwen3.check_checkpoint(aligner, aligner=True)
-        if qwen3.checkpoint_digest(aligner) != runtime["aligner_sha256"]:
+        aligner_digest = qwen3.checkpoint_digest(aligner)
+        if aligner_digest != runtime.get("aligner_sha256", aligner_digest):
             logging.warning("Qwen3 forced aligner SHA-256 mismatch: %s", aligner.name)
             return "check_failed"
+        entry["qwen3"] = {**runtime, "aligner_sha256": aligner_digest}
         digest = qwen3.checkpoint_digest(path)
     else:
         with path.open("rb") as stream:
@@ -206,7 +209,18 @@ def refresh_models(settings, config, previous, stop, publish):
     default = config.model
     candidates = {name: Path(entry["path"]) for name, entry in previous.items()
                   if not entry_signature(entry)}
-    candidates.update((name, Path(row["path"])) for name, row in controls.items() if row["path"])
+    registered = {name: Path(row["path"]) for name, row in controls.items() if row["path"]}
+    explicit_paths = {default.resolve(), *(path.resolve() for path in registered.values())}
+    model_dir = ROOT / "models"
+    discovery_dirs = dict.fromkeys((default.parent, model_dir, model_dir / "qwen3"))
+    discovered = {}
+    for path in qwen3.discover_models(*discovery_dirs):
+        resolved = path.resolve()
+        if resolved not in explicit_paths:
+            discovered.setdefault(path.name, path)
+            explicit_paths.add(resolved)
+    candidates.update(discovered)
+    candidates.update(registered)
     if config.executable:
         candidates.update((path.name, path) for path in sorted(default.parent.glob("ggml-*.bin"))
                           if path.resolve().parent == default.resolve().parent)
@@ -216,7 +230,9 @@ def refresh_models(settings, config, previous, stop, publish):
         control = controls.get(name, {})
         engine = config.snapshot["engine"] if name == default.name else (
             qwen3.ENGINE if path.is_dir() else "whisper.cpp")
-        runtime = config.snapshot.get("qwen3") if engine == qwen3.ENGINE else None
+        runtime = None
+        if engine == qwen3.ENGINE:
+            runtime = config.snapshot.get("qwen3") or qwen3.local_runtime(path, ROOT)
         signature = model_signature(path, runtime)
         revision = control.get("revision", 0)
         old = previous.get(name, {})
@@ -295,6 +311,8 @@ def select_model(config, name):
                 "model_name": name, "model_revision": "unrecorded"}
     if entry["engine"] != config.snapshot["engine"]:
         snapshot.update(engine_version="unrecorded", engine_commit="unrecorded")
+    if entry["engine"] == qwen3.ENGINE:
+        snapshot["qwen3"] = entry["qwen3"]
     apply_engine(snapshot, entry["engine"])
     return replace(config, model=path, snapshot=snapshot)
 

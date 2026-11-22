@@ -50,11 +50,11 @@ uv venv --no-project --python 3.11 .local/qwen3-runtime
 uv pip install --python .local/qwen3-runtime "qwen-asr==0.0.6"
 ```
 
-也可按 [Qwen 官方下载说明](https://github.com/QwenLM/Qwen3-ASR#released-models-description-and-download)从 ModelScope 下载。将识别模型和 `Qwen3-ForcedAligner-0.6B` 放在同一父目录下。首次启动时输入识别模型目录，ReCue 会找到同级对齐模型和上面创建的 Python 环境。如果资源放在其他位置，再按提示输入路径。
+也可按 [Qwen 官方下载说明](https://github.com/QwenLM/Qwen3-ASR#released-models-description-and-download)从 ModelScope 下载。将识别模型和 `Qwen3-ForcedAligner-0.6B` 放在同一父目录下。要把 Qwen3-ASR 设为默认模型，可在首次启动时输入识别模型目录。ReCue 会找到同级对齐模型和上面创建的 Python 环境。如果资源放在其他位置，再按提示输入路径。
 
 ### 管理已安装模型
 
-上传前可展开「转写设置」，查看处理电脑上的模型、可用状态和原因。转写进程会发现默认模型及其同目录的 Whisper `ggml-*.bin`，并在空闲时验证已发现或手动登记的模型。无法加载、仅支持英语或验证超时的权重会给出对应状态。短测基于一秒静音，内存估算用于帮助选择模型。对于参考数据不足的模型，列表可显示「资源需求未知」。
+上传前可展开「转写设置」，查看处理电脑上的模型、可用状态和原因。转写进程会发现默认模型及其同目录的 Whisper `ggml-*.bin`。Qwen3-ASR 会从默认模型所在目录、项目的 `models/` 和 `models/qwen3/` 中直接查找模型子目录。已有 Whisper 配置也可以发现 Qwen3-ASR，默认模型继续沿用现有设置。转写进程在空闲时验证已发现或手动登记的模型。无法加载、仅支持英语或验证超时的权重会给出对应状态。短测基于一秒静音，内存估算用于帮助选择模型。对于参考数据不足的模型，列表可显示「资源需求未知」。
 
 服务端会在领取任务前重查当前内存余量。低于推荐余量时可以尝试，明显不足时暂停领取该模型的任务。已排队任务会显示等待原因，恢复后自动继续。也可先在「转写设置」里选可用模型，再对受阻任务点击「改用所选模型」。普通重试仍沿用原任务模型。
 
@@ -71,7 +71,7 @@ uv run --offline --locked python -m app.model_commands enable ggml-large-v3-q5_0
 
 服务端接收文件后，上传条目会在对应媒体出现在列表时收起。列表中的「已用」和「总耗时」从本次任务入队开始计算，包含排队时间。重试从新任务入队重新计时。识别时列表显示引擎上报的进度，Windows 还显示识别进程树占整机的 CPU 百分比和峰值提交内存。桌面阅读页可拖动播放器与讲稿之间的分隔条调节比例（20%–80%），也可聚焦后用左右方向键微调，双击分隔条恢复 60/40。比例在当前浏览器保存。窄屏采用上下布局。
 
-Whisper 和 Qwen3-ASR 可以同时出现在「转写设置」。如果要混用两种引擎，现有配置须同时保留 Whisper 的 `executable`、`executable_sha256`，以及 Qwen3 的 `qwen3` 对象。两份配置示例中的字段可合并，`engine` 和 `model` 保留默认模型的设置。需要手动补齐对齐目录指纹时，在 `backend` 目录运行 `uv run --offline --locked python -m app.model_commands fingerprint "/path/to/Qwen3-ForcedAligner-0.6B" --aligner`。更新后重启，再用 `add` 登记另一种引擎的模型。
+Whisper 和 Qwen3-ASR 可以同时出现在「转写设置」。使用默认布局时，将 Qwen3-ASR 及其对齐模型放入上述发现目录，并按前面的步骤创建 `.local/qwen3-runtime`。自定义 Python 或对齐模型路径时，使用 [Qwen3-ASR 示例](examples/processing.qwen3.example.json)中的 `qwen3` 对象。可在 `backend` 目录运行 `uv run --offline --locked python -m app.model_commands fingerprint "/path/to/Qwen3-ForcedAligner-0.6B" --aligner` 计算对齐模型指纹。以 Qwen3 为默认时，加入 Whisper 还需要 Whisper 的 `executable` 和 `executable_sha256`。修改配置后重启。
 
 ## 部署配置参考
 

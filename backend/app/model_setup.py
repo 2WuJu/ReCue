@@ -48,12 +48,11 @@ def first_config():
     settings = dict(version=1, backend="cpu", model=str(model), model_name=model.name,
                     engine_commit="unrecorded", model_revision="unrecorded", ffprobe="ffprobe")
     if model.is_dir():
-        aligner = model.parent / "Qwen3-ForcedAligner-0.6B"
+        aligner = model.parent / qwen3.ALIGNER_NAME
         if not aligner.is_dir() or not is_checkpoint(aligner, aligner=True):
             aligner = ask_path("请输入 Qwen3-ForcedAligner-0.6B 目录的路径：",
                                lambda path: path.is_dir() and is_checkpoint(path, aligner=True))
-        python_path = "Scripts/python.exe" if os.name == "nt" else "bin/python"
-        python = ROOT / ".local/qwen3-runtime" / python_path
+        python = ROOT / qwen3.RUNTIME_PYTHON
         if not python.is_file():
             python = ask_path("请输入已安装 qwen-asr==0.0.6 的 Python 可执行文件路径：", Path.is_file)
         print("正在计算模型指纹……", flush=True)

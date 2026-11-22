@@ -99,10 +99,12 @@ class QwenConfigurationTests(unittest.TestCase):
                                 executable=str(whisper), executable_sha256=digest))
         with connect(self.settings.database) as db, db:
             db.execute("INSERT INTO model_controls(name, path) VALUES (?, ?)", ("qwen", str(self.asr)))
-        with patch("app.worker.configuration.available_memory", return_value=8192), \
+        with patch("app.worker.configuration.ROOT", self.root), \
+             patch("app.worker.configuration.available_memory", return_value=8192), \
              patch("app.worker.configuration.probe_model") as whisper_probe, \
              patch("app.transcription.qwen3.probe_model") as qwen_probe:
             models = refresh_models(self.settings, config, {}, Event(), lambda _: None)
+            self.assertEqual(set(models), {whisper.name, "qwen"})
             whisper_probe.assert_called_once()
             qwen_probe.assert_called_once()
             self.assertEqual(models["qwen"]["status"], "verified")
@@ -116,3 +118,41 @@ class QwenConfigurationTests(unittest.TestCase):
             self.assertEqual(changed["qwen"]["status"], "check_failed")
             self.assertEqual(changed[whisper.name]["status"], "verified")
             qwen_probe.assert_called_once()
+
+    def test_whisper_config_discovers_local_qwen_without_registration(self):
+        group = self.root / "models" / "qwen3"
+        group.mkdir(parents=True)
+        asr = self.asr.rename(group / "Qwen3-ASR-0.6B")
+        aligner = self.aligner.rename(group / qwen3.ALIGNER_NAME)
+        incomplete = group / "incomplete"
+        incomplete.mkdir()
+        (incomplete / "config.json").write_text('{"model_type": "qwen3_asr"}')
+        whisper = self.root / "ggml-fixture.bin"
+        whisper.write_bytes(b"lmgg" + bytes(64))
+        digest = hashlib.sha256(whisper.read_bytes()).hexdigest()
+        config = self.load(dict(version=1, backend="cpu", engine_version="fixture", engine_commit="fixture",
+                                model_revision="fixture", model_name=whisper.name, model=str(whisper),
+                                model_sha256=digest, executable=str(whisper), executable_sha256=digest))
+
+        with patch("app.worker.configuration.ROOT", self.root), \
+             patch("app.worker.configuration.available_memory", return_value=8192), \
+             patch("app.worker.configuration.probe_model"), \
+             patch("app.transcription.qwen3.probe_model") as qwen_probe:
+            models = refresh_models(self.settings, config, {}, Event(), lambda _: None)
+            self.assertEqual(set(models), {whisper.name, asr.name})
+            self.assertEqual(models[asr.name]["status"], "unsupported")
+            qwen_probe.assert_not_called()
+
+            python = self.root / qwen3.RUNTIME_PYTHON
+            python.parent.mkdir(parents=True)
+            python.touch()
+            models = refresh_models(self.settings, config, models, Event(), lambda _: None)
+            self.assertEqual(models[asr.name]["status"], "verified")
+            self.assertTrue(models[whisper.name]["is_default"])
+            qwen_probe.assert_called_once()
+            selected = select_model(replace(config, models=models), asr.name)
+            self.assertEqual(selected.snapshot["engine"], qwen3.ENGINE)
+            self.assertEqual(selected.snapshot["qwen3"], dict(
+                python=str(python), aligner=str(aligner), aligner_sha256=qwen3.checkpoint_digest(aligner)))
+            self.assertEqual(selected.model, asr)
+            self.assertNotIn("qwen3", config.snapshot)

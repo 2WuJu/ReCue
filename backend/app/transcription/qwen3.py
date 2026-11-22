@@ -1,6 +1,7 @@
 """Run local Qwen3-ASR and translate forced alignment into ReCue segments."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import unicodedata
@@ -9,6 +10,8 @@ from app.processes import run_tool
 from app.transcription.segments import TranscriptionError, UnsupportedModel, validate_segments
 
 ENGINE = "qwen3-asr"
+ALIGNER_NAME = "Qwen3-ForcedAligner-0.6B"
+RUNTIME_PYTHON = Path(".local/qwen3-runtime") / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 VERSION = "0.0.6"
 RUNNER = Path(__file__).with_name("_qwen3_runner.py").resolve()
 CHECKPOINT_SUFFIXES = {".json", ".txt", ".safetensors", ".jinja", ".model"}
@@ -36,6 +39,24 @@ def check_checkpoint(path, *, aligner=False):
         raise UnsupportedModel(f"Expected a {expected} checkpoint")
     if not any(path.glob("*.safetensors")):
         raise TranscriptionError("Qwen3 checkpoint is missing safetensors weights")
+
+
+def discover_models(*directories):
+    for directory in directories:
+        for config in sorted(directory.glob("*/config.json")):
+            try:
+                check_checkpoint(config.parent)
+            except (OSError, ValueError):
+                continue
+            yield config.parent
+
+
+def local_runtime(model, root):
+    python = root / RUNTIME_PYTHON
+    aligner = model.parent / ALIGNER_NAME
+    if python.is_file() and aligner.is_dir():
+        return dict(python=str(python), aligner=str(aligner))
+    return None
 
 
 def alignment_char(character):
