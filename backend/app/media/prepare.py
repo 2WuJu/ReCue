@@ -3,11 +3,12 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import wave
 
-from app.processes import ProcessCancelled, run_tool
+from app.processes import ProcessCancelled, run_tool, tool_log_tail
 from app.storage.uploads import MAX_UPLOAD_BYTES
 
 MAX_DURATION_MS = 120 * 60 * 1000
@@ -39,7 +40,7 @@ def number(value):
 
 
 def prepare(source: Path, output_dir: Path, *, ffmpeg="ffmpeg", ffprobe="ffprobe",
-            timeout=4 * 60 * 60, cancel=None):
+            timeout=4 * 60 * 60, cancel=None, progress=None):
     """Return only validated artifacts; retain private partial files on failure.
 
     Both streams subtract the SAME source origin. Audio resampling pads initial
@@ -60,15 +61,29 @@ def prepare(source: Path, output_dir: Path, *, ffmpeg="ffmpeg", ffprobe="ffprobe
     ffmpeg_path, ffprobe_path = [str(Path(item).resolve()) for item in executables]
     output_dir.mkdir(parents=True, exist_ok=False)
 
-    def execute(label, command):
+    def execute(label, command, report=None):
         try:
             with (output_dir / f"{label}.stdout").open("xb") as stdout, \
                     (output_dir / f"{label}.stderr").open("xb") as stderr:
-                run_tool(command, stdout=stdout, stderr=stderr, timeout=timeout, cancel=cancel)
+                run_tool(command, stdout=stdout, stderr=stderr, timeout=timeout, cancel=cancel,
+                         report=report)
         except subprocess.TimeoutExpired as exc:
             raise PreparationError(f"Media {label} timed out") from exc
         except subprocess.CalledProcessError as exc:
             raise PreparationError(f"Media {label} failed; inspect private processing logs") from exc
+
+    def encode(label, command, duration, start, end):
+        report = None
+        if progress is not None and duration is not None and duration > 0:
+            def report(_cpu, _memory):
+                matches = re.findall(rb"(?m)^out_time_us=(-?\d+)\r?\n",
+                                     tool_log_tail(output_dir / f"{label}.stdout"))
+                if matches:
+                    fraction = int(matches[-1]) / (duration * 1_000_000)
+                    progress(start + int((end - start) * min(1, max(0, fraction))))
+
+            command = [command[0], "-progress", "pipe:1", "-stats_period", "0.5", *command[1:]]
+        execute(label, command, report)
 
     def probe(label, path):
         execute(label, [ffprobe_path, "-v", "error", "-protocol_whitelist", "file",
@@ -95,10 +110,12 @@ def prepare(source: Path, output_dir: Path, *, ffmpeg="ffmpeg", ffprobe="ffprobe
     starts = [number(item["start_time"]) for item in streams if "start_time" in item]
     origin = number(metadata["format"].get("start_time", min(starts, default=Decimal(0))))
     reported_duration = metadata["format"].get("duration")
+    source_duration = None
     if reported_duration is not None:
         # Some demuxers report an absolute end, others a duration. This is only
         # a conservative early rejection; decoded output remains authoritative.
-        minimum_duration = number(reported_duration) - max(origin, Decimal(0))
+        source_duration = number(reported_duration)
+        minimum_duration = source_duration - max(origin, Decimal(0))
         if minimum_duration > Decimal(MAX_DURATION_MS) / 1000:
             raise PreparationError("Reported media duration exceeds 120 minutes")
     media_type = "video" if video else "audio"
@@ -116,7 +133,9 @@ def prepare(source: Path, output_dir: Path, *, ffmpeg="ffmpeg", ffprobe="ffprobe
                     "-pix_fmt", "yuv420p", "-fps_mode:v", "vfr"]
     command += ["-c:a", "aac", "-b:a", "160k", "-map_metadata", "-1", "-map_chapters", "-1",
                 "-avoid_negative_ts", "disabled", "-movflags", "+faststart", str(playback)]
-    execute("playback", command)  # Full selected-stream decode; no -t / -shortest.
+    # Playback encoding does most of the work, especially when it includes video.
+    playback_share = 85 if video else 65
+    encode("playback", command, source_duration, 0, playback_share - 1)
     output = probe("playback-probe", playback)
     duration = number(output["format"].get("duration"))
     if not 0 < duration <= Decimal(MAX_DURATION_MS) / 1000:
@@ -125,9 +144,12 @@ def prepare(source: Path, output_dir: Path, *, ffmpeg="ffmpeg", ffprobe="ffprobe
         raise PreparationError("Playback did not retain the normalized timeline origin")
     # Decode the original audio, not lossy AAC, and pad its tail to the video end.
     samples = int((duration * 16000).to_integral_value(rounding=ROUND_CEILING))
-    execute("recognition", base + ["-map", f"0:{audio['index']}", "-vn", "-af",
+    if progress is not None:
+        progress(playback_share)
+    encode("recognition", base + ["-map", f"0:{audio['index']}", "-vn", "-af",
             f"asetpts=PTS-({origin})/TB,aresample=16000:async=1:first_pts=0,apad=whole_len={samples}",
-            "-ac", "1", "-c:a", "pcm_s16le", "-map_metadata", "-1", str(wav)])
+            "-ac", "1", "-c:a", "pcm_s16le", "-map_metadata", "-1", str(wav)],
+           duration, playback_share, 99)
     with wave.open(str(wav), "rb") as reader:
         if (reader.getnchannels(), reader.getsampwidth(), reader.getframerate()) != (1, 2, 16000):
             raise PreparationError("Invalid recognition PCM format")

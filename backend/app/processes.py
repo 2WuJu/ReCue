@@ -28,6 +28,12 @@ class ProcessCancelled(RuntimeError):
     pass
 
 
+def tool_log_tail(path):
+    with path.open("rb") as stream:
+        stream.seek(max(0, os.fstat(stream.fileno()).st_size - 4096))
+        return stream.read(4096)
+
+
 def run_tool(command, *, stdout, stderr, timeout, cancel=None, report=None, measure_memory=False):
     """Run an argument array with file-backed output, never a shell or a pipe.
 

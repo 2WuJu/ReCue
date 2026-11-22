@@ -6,7 +6,7 @@ from app.worker.configuration import ModelUnavailable, select_model
 from app.worker.resources import available_memory, swap_written
 
 from app.media.prepare import PreparationError, prepare
-from app.processes import ProcessCancelled
+from app.processes import ProcessCancelled, tool_log_tail
 from app.repositories.database import connect
 from app.repositories.queue import QueueConflict, fail_owned, now_ms
 from app.repositories.transcripts import publish
@@ -45,11 +45,25 @@ def process_attempt(settings, config, job, stop):
         if stop.is_set() or cancel.is_set() or not owned(database, job, owner):
             raise ProcessCancelled("Attempt stopped or ownership changed")
         with connect(database) as db, db:
-            db.execute("UPDATE jobs SET stage=? WHERE id=? AND worker_id=? AND status='running'",
+            db.execute("""UPDATE jobs SET stage=?, progress_percent=NULL
+                WHERE id=? AND worker_id=? AND status='running'""",
                        (value, job["id"], owner))
             if snapshot:
                 db.execute("UPDATE jobs SET parameters_json=? WHERE id=? AND worker_id=?",
                            (json.dumps(snapshot), job["id"], owner))
+
+    last_preparation_percent = -1
+
+    def preparation_progress(percent):
+        nonlocal last_preparation_percent
+        if percent <= last_preparation_percent or cancel.is_set() or stop.is_set():
+            return
+        with connect(database) as db, db:
+            db.execute("""UPDATE jobs SET progress_percent=?
+                WHERE id=? AND worker_id=? AND status='running'
+                  AND stage='preprocessing' AND cancel_requested=0""",
+                       (percent, job["id"], owner))
+        last_preparation_percent = percent
 
     row = owned(database, job, owner)
     thread = threading.Thread(target=monitor)
@@ -68,16 +82,21 @@ def process_attempt(settings, config, job, stop):
                        (engine, config.snapshot["model_name"], json.dumps(config.snapshot), job["id"], owner))
         stage("preprocessing")
         prepared = prepare(source, work / "prepared", ffmpeg=config.ffmpeg,
-                           ffprobe=config.ffprobe, cancel=cancel)
+                           ffprobe=config.ffprobe, cancel=cancel, progress=preparation_progress)
         snapshot = {**config.snapshot, "source_origin_seconds": prepared.source_origin_seconds}
         stage("transcribing", snapshot)
 
         previous_swap = swap_written()
         pressure_samples = 0
         swap_samples = 0
+        recognition_log = work / "recognition" / ("stdout.log" if engine == qwen3.ENGINE else "stderr.log")
+        progress_pattern = (rb"(?m)^recue_progress=(\d{1,3})%\r?\n" if engine == qwen3.ENGINE
+                            else rb"progress\s*=\s*(\d{1,3})%")
 
         def report(cpu, peak_memory):
             nonlocal previous_swap, pressure_samples, swap_samples
+            if cancel.is_set() or stop.is_set():
+                return
             available, written = available_memory(), swap_written()
             under_pressure = available is not None and available < 512
             paging = under_pressure and written is not None and previous_swap is not None and written > previous_swap
@@ -89,16 +108,15 @@ def process_attempt(settings, config, job, stop):
                 warning = "处理电脑内存紧张，正在持续换页，可停止转写或释放内存"
             elif pressure_samples >= 3:
                 warning = "处理电脑可用内存持续偏低，可关闭其他程序释放内存"
-            log = work / "recognition" / "stderr.log"
-            with log.open("rb") as stream:
-                stream.seek(max(0, log.stat().st_size - 4096))
-                matches = re.findall(rb"progress\s*=\s*(\d{1,3})%", stream.read())
+            matches = re.findall(progress_pattern, tool_log_tail(recognition_log))
             percent = min(100, int(matches[-1])) if matches else None
             with connect(database) as db, db:
-                db.execute("""UPDATE jobs SET progress_percent=coalesce(?,progress_percent),
+                db.execute("""UPDATE jobs SET progress_percent=CASE
+                    WHEN ? > coalesce(progress_percent, -1) THEN ? ELSE progress_percent END,
                     cpu_percent=?, peak_memory_mib=?, error_message=?
-                    WHERE id=? AND worker_id=? AND status='running'""",
-                           (percent, cpu, peak_memory, warning, job["id"], owner))
+                    WHERE id=? AND worker_id=? AND status='running'
+                      AND stage='transcribing' AND cancel_requested=0""",
+                           (percent, percent, cpu, peak_memory, warning, job["id"], owner))
 
         recognize, runtime = (qwen3.transcribe, snapshot["qwen3"]) if engine == qwen3.ENGINE else (
             transcribe, config.executable)

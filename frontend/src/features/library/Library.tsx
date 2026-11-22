@@ -19,22 +19,45 @@ function status(item: Media) {
   if (job?.status === 'queued' && job.wait_reason) return '等待模型';
   return job ? stages[job.status === 'running' ? job.stage ?? 'running' : job.status] ?? '处理中' : '等待任务';
 }
+function ElapsedTime({ createdAt }: { createdAt: number }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    let timer: number;
+    function schedule(now: number) {
+      const elapsed = Math.max(0, now - createdAt);
+      timer = window.setTimeout(() => {
+        const current = Date.now();
+        setNow(current);
+        schedule(current);
+      }, 1000 - elapsed % 1000);
+    }
+    schedule(Date.now());
+    return () => window.clearTimeout(timer);
+  }, [createdAt]);
+  return <>已用 {formatTime(Math.max(0, now - createdAt))}</>;
+}
 function TaskMetrics({ item }: { item: Media }) {
   const job = item.latest_job;
   if (item.lifecycle === 'deleting') return <>正在停止任务并清理文件</>;
   const detail = item.delete_error ?? job?.wait_reason ?? job?.error_message;
   if (!job) return <>{detail ?? '—'}</>;
   const running = job.status === 'running';
-  const end = running ? Date.now() : job.finished_at;
+  const progressLabel = job.stage === 'preprocessing' ? '预处理进度' :
+    job.stage === 'transcribing' ? '转写进度' : null;
+  const transcribing = running && job.stage === 'transcribing';
+  const duration = running ? <ElapsedTime key={job.id} createdAt={job.created_at} /> :
+    job.finished_at == null ? null : `总耗时 ${formatTime(Math.max(0, job.finished_at - job.created_at))}`;
   return <span className="task-metrics">
     {detail && <span>{detail}<br /></span>}
-    {end != null ? <span title="本次任务从入队到结束，包含排队时间">
-      {running ? '已用' : '总耗时'} {formatTime(Math.max(0, end - job.created_at))}
+    {duration != null ? <span title="本次任务从入队到结束，包含排队时间">
+      {duration}
     </span> : job.status === 'queued' && !detail ? '等待后台处理' : null}
-    {running && job.stage === 'transcribing' && <>
-      {job.model && ` · ${job.model}`}
-      <progress aria-label="识别进度" value={job.progress_percent ?? undefined} max={100} />
-      {job.progress_percent == null ? '等待识别进度' : `识别进度 ${job.progress_percent}%`}
+    {transcribing && job.model && ` · ${job.model}`}
+    {running && progressLabel && <>
+      <progress aria-label={progressLabel} value={job.progress_percent ?? undefined} max={100} />
+      {job.progress_percent == null ? `正在获取${progressLabel}` : `${progressLabel} ${job.progress_percent}%`}
+    </>}
+    {transcribing && <>
       {job.cpu_percent != null && ` · CPU ${job.cpu_percent.toFixed(1)}%`}
       {job.peak_memory_mib != null && ` · 峰值提交内存 ${Math.round(job.peak_memory_mib)} MiB`}
     </>}

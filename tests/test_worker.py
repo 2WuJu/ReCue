@@ -52,8 +52,8 @@ class WorkerTests(unittest.TestCase):
         playback.write_bytes(b"fixture")
         return PreparedMedia(source, playback, 1000, "audio", "5")
 
-    def run_attempt(self, transcription=None):
-        with patch("app.worker.processor.prepare", side_effect=self.prepared), \
+    def run_attempt(self, transcription=None, preparation=None):
+        with patch("app.worker.processor.prepare", side_effect=preparation or self.prepared), \
              patch("app.worker.processor.transcribe", side_effect=transcription or (lambda *a, **kw: [
                  dict(start_ms=0, end_ms=500, text="transaction fixture")])):
             process_attempt(self.settings, self.config, self.job, self.stop)
@@ -64,6 +64,31 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(json.loads(self.row("jobs")["parameters_json"])["source_origin_seconds"], "5")
         self.assertTrue((self.data / self.row("media")["playback_path"]).is_file())
         self.assertEqual(self.row("transcripts")["job_id"], self.job["id"])
+
+    def test_progress_is_monotonic_within_each_stage_and_resets_between_stages(self):
+        def prepare(source, directory, *, progress, **kwargs):
+            self.assertIsNone(self.row("jobs")["progress_percent"])
+            progress(0)
+            self.assertEqual(self.row("jobs")["progress_percent"], 0)
+            progress(65)
+            progress(30)
+            self.assertEqual(self.row("jobs")["progress_percent"], 65)
+            return self.prepared(source, directory)
+
+        def transcribe(audio, model, executable, work, duration, *, report, **kwargs):
+            self.assertIsNone(self.row("jobs")["progress_percent"])
+            work.mkdir()
+            log = work / "stderr.log"
+            for message, expected in (("loading model", None), ("progress = 0%", 0),
+                                      ("progress = 50%", 50), ("progress = 20%", 50)):
+                log.write_text(message, encoding="utf-8")
+                report(None, None)
+                self.assertEqual(self.row("jobs")["progress_percent"], expected)
+            return [dict(start_ms=0, end_ms=500, text="progress fixture")]
+
+        self.run_attempt(transcribe, prepare)
+        self.assertEqual(self.row("jobs")["status"], "succeeded")
+        self.assertIsNone(self.row("jobs")["progress_percent"])
 
     def test_cancellation_and_deletion_before_publish_do_not_expose_artifacts(self):
         def cancel(*args, **kwargs):
