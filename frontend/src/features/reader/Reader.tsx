@@ -127,8 +127,27 @@ export function Reader({ mediaId }: { mediaId: string }) {
   }
   function renderSegment(index: number, part?: Article['paragraphs'][number][number], key?: number) {
     const segment = data!.transcript.segments[index];
-    return <button key={key ?? segment.id} data-segment={index} aria-current={active === index ? 'true' : undefined} className={`sentence${active === index ? ' playing' : ''}`} disabled={!ready} title={view === 'article' ? `从 ${formatTime(segment.start_ms)} 播放` : undefined} onClick={() => void seek(segment.start_ms)}>{view === 'timeline' && <time>{formatTime(segment.start_ms)}</time>}<span>{part ? text(index, segment.text.slice(part.start, part.end), part.start) : text(index, segment.text)}{part?.suffix}</span></button>;
+    const playing = active === index;
+    const play = () => void seek(segment.start_ms);
+    if (part) {
+      return <span key={key} className={playing ? 'article-segment playing' : 'article-segment'}
+        data-segment={index} aria-current={playing ? 'true' : undefined}
+        role="button" tabIndex={ready ? 0 : -1} aria-disabled={ready ? undefined : true}
+        title={`从 ${formatTime(segment.start_ms)} 播放`}
+        onClick={ready ? play : undefined}
+        onKeyDown={event => {
+          if (!ready || (event.key !== 'Enter' && event.key !== ' ')) return;
+          event.preventDefault();
+          event.stopPropagation();
+          if (!event.repeat) play();
+        }}>{text(index, segment.text.slice(part.start, part.end), part.start)}{part.suffix}</span>;
+    }
+    return <button key={segment.id} data-segment={index} aria-current={playing ? 'true' : undefined}
+      className={playing ? 'sentence playing' : 'sentence'} disabled={!ready} onClick={play}>
+      <time>{formatTime(segment.start_ms)}</time><span>{text(index, segment.text)}</span>
+    </button>;
   }
+
   return <><div className="reader-head"><a className="back" href="#" aria-label="返回媒体列表">←</a><h1 title={data?.media.display_name}>{data?.media.display_name ?? '讲稿阅读'}</h1></div>
     {error ? <div className="error" role="alert">媒体、讲稿或进度加载失败：{error} <button onClick={() => setRevision(n => n + 1)}>重新加载</button></div> : !data ? <div className="empty">正在加载媒体、讲稿和进度…</div> : <div className="split" ref={split} style={{ '--player-width': `${ratio}fr`, '--transcript-width': `${100 - ratio}fr` } as CSSProperties}><section className="player-panel" aria-label="媒体播放">
       {data.media.media_type === 'audio' ? <audio {...props} ref={el => { player.current = el; }} /> : <video {...props} ref={el => { player.current = el; }} />}
