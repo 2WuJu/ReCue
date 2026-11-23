@@ -32,7 +32,7 @@ sequenceDiagram
 | 转写 · Qwen3-ASR CPU | [0.6B](https://huggingface.co/Qwen/Qwen3-ASR-0.6B/tree/main) 或 [1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B/tree/main)，均需 [Qwen3-ForcedAligner-0.6B](https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B/tree/main) | 分别下载识别和对齐模型的完整目录，保留配置、分词器及全部 `.safetensors` 分片。需要独立的 Python 3.11 环境和 [`qwen-asr==0.0.6`](https://pypi.org/project/qwen-asr/0.0.6/) |
 | 文章补标点 · CT-Transformer | [中英 INT8 权重（约 62 MiB）](https://github.com/k2-fsa/sherpa-onnx/releases/download/punctuation-models/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12-int8.tar.bz2) | 可选，按[文章式文字稿](#文章式文字稿)用脚本下载并校验 |
 
-转写当前使用 CPU，面向中文课程及夹杂的英文术语。Whisper 已在 Windows 和 macOS 验证；两款 Qwen3-ASR 已在 Apple Silicon macOS 实测，Windows 已核对 Python 依赖可解析，仍待实机转写验证。Qwen3-ASR 使用 FP32，对内存要求较高。在同一台 Apple Silicon Mac 上转写 65 秒样本时，识别子进程的峰值约为 9 GiB（0.6B）和 14 GiB（1.7B）。实际余量以「转写设置」为准。
+转写当前使用 CPU，面向中文课程及夹杂的英文术语。Whisper 已在 Windows 和 macOS 验证；两款 Qwen3-ASR 已在 Apple Silicon macOS 实测，Windows 已核对 Python 依赖可解析，仍待实机转写验证。Qwen3-ASR 使用 FP32，对内存要求较高。在同一台 Apple Silicon Mac 上转写 65 秒样本时，识别子进程的峰值约为 9 GiB（0.6B）和 14 GiB（1.7B）。转写任务页右上角显示处理电脑当前可用内存。
 
 ### 准备转写配置
 
@@ -54,9 +54,9 @@ uv pip install --python .local/qwen3-runtime "qwen-asr==0.0.6"
 
 ### 管理已安装模型
 
-上传前可展开「转写设置」，查看处理电脑上的模型、可用状态和原因。转写进程会发现默认模型及其同目录的 Whisper `ggml-*.bin`。Qwen3-ASR 会从默认模型所在目录、项目的 `models/` 和 `models/qwen3/` 中直接查找模型子目录。已有 Whisper 配置也可以发现 Qwen3-ASR，默认模型继续沿用现有设置。转写进程在空闲时验证已发现或手动登记的模型。无法加载、仅支持英语或验证超时的权重会给出对应状态。短测基于一秒静音，内存估算用于帮助选择模型。对于参考数据不足的模型，列表可显示「资源需求未知」。
+提交前可展开「本批转写模型」，对照处理电脑的可用内存、模型最低门槛和推荐内存。首次使用预选服务端默认模型。每批提交时固定选中的模型，当前浏览器会记住上次提交所用的模型。上次使用的模型暂不可用时，页面会提示并优先选用可用的服务端默认模型。转写进程会发现默认模型及其同目录的 Whisper `ggml-*.bin`。Qwen3-ASR 会从默认模型所在目录、项目的 `models/` 和 `models/qwen3/` 中直接查找模型子目录。已有 Whisper 配置也可以发现 Qwen3-ASR，默认模型继续沿用现有设置。转写进程在空闲时验证已发现或手动登记的模型。无法加载、仅支持英语或验证超时的权重会给出对应状态。短测基于一秒静音，内存估算用于帮助选择模型。对于参考数据不足的模型，列表可显示「内存数据不足」。
 
-服务端会在领取任务前重查当前内存余量。低于推荐余量时可以尝试，明显不足时暂停领取该模型的任务。已排队任务会显示等待原因，恢复后自动继续。也可先在「转写设置」里选可用模型，再对受阻任务点击「改用所选模型」。普通重试仍沿用原任务模型。
+服务端会在领取任务前重查当前内存余量。低于推荐余量时可以尝试，明显不足时暂停领取该模型的任务。已排队任务会显示等待原因，恢复后自动继续。也可在受阻任务的处理详情中点击「更换模型」，选择可用模型后重新排队。失败任务的「重试」沿用原模型。
 
 在**处理电脑**的 `backend` 目录运行以下命令。若服务使用自定义数据目录，请在同一终端设置相同的 `RECUE_DATA_DIR`：
 
@@ -69,9 +69,9 @@ uv run --offline --locked python -m app.model_commands enable ggml-large-v3-q5_0
 
 `add` 可登记本地 Whisper 权重文件或 Qwen3-ASR 模型目录。可用 `--name` 为同名模型指定不同的列表名称。`check` 请求转写进程在空闲时重新验证。停用设置保存在本地数据库，即时阻止新任务使用该模型，已领取的任务继续运行。
 
-服务端接收文件后，上传条目会在对应媒体出现在列表时收起。列表中的「已用」和「总耗时」从本次任务入队开始计算，包含排队时间。重试从新任务入队重新计时。识别时列表显示引擎上报的进度，Windows 还显示识别进程树占整机的 CPU 百分比和峰值提交内存。桌面阅读页可拖动播放器与讲稿之间的分隔条调节比例（20%–80%），也可聚焦后用左右方向键微调，双击分隔条恢复 60/40。比例在当前浏览器保存。窄屏采用上下布局。
+待上传文件显示在拖放区下方。提交后，上传进度和服务端处理状态显示在转写任务列表中。列表中的「已用」和「总耗时」从本次任务入队开始计算，包含排队时间。重试从新任务入队重新计时。识别时，处理详情显示可获取的进度和识别进程树的 CPU 占比、当前驻留内存及峰值。峰值在 macOS 上为采样驻留内存，在 Windows 上为作业提交内存。桌面阅读页可拖动播放器与讲稿之间的分隔条调节比例（20%–80%），也可聚焦后用左右方向键微调，双击分隔条恢复 60/40。比例在当前浏览器保存。窄屏采用上下布局。
 
-Whisper 和 Qwen3-ASR 可以同时出现在「转写设置」。使用默认布局时，将 Qwen3-ASR 及其对齐模型放入上述发现目录，并按前面的步骤创建 `.local/qwen3-runtime`。自定义 Python 或对齐模型路径时，使用 [Qwen3-ASR 示例](examples/processing.qwen3.example.json)中的 `qwen3` 对象。可在 `backend` 目录运行 `uv run --offline --locked python -m app.model_commands fingerprint "/path/to/Qwen3-ForcedAligner-0.6B" --aligner` 计算对齐模型指纹。以 Qwen3 为默认时，加入 Whisper 还需要 Whisper 的 `executable` 和 `executable_sha256`。修改配置后重启。
+Whisper 和 Qwen3-ASR 可以同时出现在「本批转写模型」的选项中。使用默认布局时，将 Qwen3-ASR 及其对齐模型放入上述发现目录，并按前面的步骤创建 `.local/qwen3-runtime`。自定义 Python 或对齐模型路径时，使用 [Qwen3-ASR 示例](examples/processing.qwen3.example.json)中的 `qwen3` 对象。可在 `backend` 目录运行 `uv run --offline --locked python -m app.model_commands fingerprint "/path/to/Qwen3-ForcedAligner-0.6B" --aligner` 计算对齐模型指纹。以 Qwen3 为默认时，加入 Whisper 还需要 Whisper 的 `executable` 和 `executable_sha256`。修改配置后重启。
 
 ## 部署配置参考
 

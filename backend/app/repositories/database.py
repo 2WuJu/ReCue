@@ -110,6 +110,12 @@ MIGRATIONS = [
         )""",
         "ALTER TABLE jobs ADD COLUMN wait_reason TEXT",
     ]),
+    (10, [
+        "ALTER TABLE jobs ADD COLUMN current_memory_mib REAL",
+        "ALTER TABLE jobs ADD COLUMN peak_memory_kind TEXT",
+        """UPDATE jobs SET peak_memory_kind='commit'
+           WHERE peak_memory_mib IS NOT NULL""",
+    ]),
 ]
 
 

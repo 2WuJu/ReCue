@@ -114,7 +114,7 @@ def retry(db_path: Path, media_id: str, model=None, *, default_model=None):
             "failed", "interrupted",
         ):
             raise QueueConflict("Only failed/interrupted active media can be retried")
-        selected = model or job["requested_model"] or default_model
+        selected = model or job["requested_model"] or job["model"] or default_model
         ensure_enabled(db, selected)
         return _enqueue(db, media_id, job["attempt"] + 1, selected)
 
@@ -175,15 +175,17 @@ def claim_next(db_path: Path, worker_id: str, *, configuration=None, model_revis
         if job is None:
             return None
         timestamp = now_ms()
+        selected = job["requested_model"] or default_model
         db.execute(
             """UPDATE jobs SET status = 'running', stage = 'preprocessing',
+               requested_model=?,
                worker_id = ?, started_at = ?, heartbeat = ?, wait_reason=NULL WHERE id = ?""",
-            (worker_id, timestamp, timestamp, job["id"]),
+            (selected, worker_id, timestamp, timestamp, job["id"]),
         )
         if configuration is not None:
             db.execute("""UPDATE jobs SET engine=?, model=?, backend=?, processing_version=?,
                           parameters_json=? WHERE id=?""",
-                       (configuration["engine"], configuration["model_name"], configuration["backend"],
+                       (configuration["engine"], selected or configuration["model_name"], configuration["backend"],
                         configuration["processing_version"], json.dumps(configuration), job["id"]))
         return dict(db.execute("SELECT * FROM jobs WHERE id = ?", (job["id"],)).fetchone())
 

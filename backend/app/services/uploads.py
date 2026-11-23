@@ -35,18 +35,17 @@ def lookup_receipt(database, request_id):
         raise storage_error(exc) from exc
 
 
-def require_model(settings, name, *, allow_offline=False):
+def require_model(settings, name, *, allow_offline_default=False):
     models = model_catalog(settings)
     row = next((entry for entry in models if entry["name"] == name), None) if name else next(
         (entry for entry in models if entry["is_default"]), None)
-    if row and (row["selectable"] or ((name is None or allow_offline) and row["status"] == "offline")):
+    if row and (row["selectable"] or (row["status"] == "offline" and
+                (name is None or (allow_offline_default and row["is_default"])))):
         return row["name"]
     if row and row["status"] == "disabled":
         raise ServiceError(422, "model_disabled", "所选模型已停用，请重新选择")
     if row and row["status"] == "memory_insufficient":
         raise ServiceError(422, "model_memory_insufficient", row["message"], True)
-    if not row and allow_offline and not models:
-        return name
     if row or name:
         raise ServiceError(422, "invalid_model", row["message"] if row else "所选模型不可用，请刷新后重新选择")
     return None
@@ -117,7 +116,9 @@ async def receive_upload(request: Request, settings, request_id: str, display_na
             receipt = await run_in_threadpool(lookup_receipt, settings.database, request_id)
             if receipt:
                 return receipt, False
-            selected_model = await run_in_threadpool(require_model, settings, model)
+            selected_model = await run_in_threadpool(
+                require_model, settings, model, allow_offline_default=True,
+            )
             media_id = str(uuid4())
             temporary = settings.data_dir / "tmp" / f"{media_id}.part"
             source = settings.data_dir / "media" / media_id / "source"

@@ -79,16 +79,20 @@ class WorkerTests(unittest.TestCase):
             self.assertIsNone(self.row("jobs")["progress_percent"])
             work.mkdir()
             log = work / "stderr.log"
-            for message, expected in (("loading model", None), ("progress = 0%", 0),
-                                      ("progress = 50%", 50), ("progress = 20%", 50)):
+            for message, expected, current in (("loading model", None, 512), ("progress = 0%", 0, 600),
+                                               ("progress = 50%", 50, 595), ("progress = 20%", 50, 580)):
                 log.write_text(message, encoding="utf-8")
-                report(None, None)
+                report(13.5, current, current)
                 self.assertEqual(self.row("jobs")["progress_percent"], expected)
+                self.assertEqual(self.row("jobs")["current_memory_mib"], current)
+            report(None, None)
             return [dict(start_ms=0, end_ms=500, text="progress fixture")]
 
         self.run_attempt(transcribe, prepare)
         self.assertEqual(self.row("jobs")["status"], "succeeded")
         self.assertIsNone(self.row("jobs")["progress_percent"])
+        self.assertIsNone(self.row("jobs")["current_memory_mib"])
+        self.assertEqual(self.row("jobs")["peak_memory_mib"], 600)
 
     def test_cancellation_and_deletion_before_publish_do_not_expose_artifacts(self):
         def cancel(*args, **kwargs):

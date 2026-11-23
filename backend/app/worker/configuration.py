@@ -177,7 +177,7 @@ def probe_entry(config, work, audio, entry, stop):
         return "memory_insufficient"
     peak = 0
 
-    def sample(_cpu, memory):
+    def sample(_cpu, memory, _current):
         nonlocal peak
         peak = max(peak, memory or 0)
         remaining = available_memory()

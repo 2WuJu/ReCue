@@ -5,6 +5,7 @@ import msvcrt
 import os
 import subprocess
 import time
+import psutil
 from app.processes import ProcessCleanupError
 
 SIZE = c.c_size_t
@@ -118,6 +119,25 @@ class ToolJob:
         checked(query(self.job, 9, c.byref(limits), c.sizeof(limits), None))
         return ((accounting.user_time + accounting.kernel_time) / 10_000_000,
                 limits.peak_job_memory / 1024**2)
+
+    def resident_memory(self):
+        # JOBOBJECT_BASIC_PROCESS_ID_LIST starts with two DWORDs, then ULONG_PTRs.
+        capacity = 16
+        while True:
+            buffer = (w.DWORD * (2 + capacity * (c.sizeof(SIZE) // c.sizeof(w.DWORD))))()
+            if query(self.job, 3, buffer, c.sizeof(buffer), None):
+                break
+            if c.get_last_error() != 234 or buffer[0] <= capacity:  # ERROR_MORE_DATA
+                return None
+            capacity = buffer[0]
+        pids = (SIZE * buffer[1]).from_buffer(buffer, 2 * c.sizeof(w.DWORD))
+        samples = []
+        for pid in pids:
+            try:
+                samples.append(psutil.Process(pid).memory_info().rss)
+            except (OSError, psutil.Error):
+                continue
+        return sum(samples) / 1024**2 if samples else None
 
     def _spawn(self, command, stdout, stderr, outer_job):
         inherited = []

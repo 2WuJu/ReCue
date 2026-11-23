@@ -1,5 +1,6 @@
 """One owned attempt: private artifacts first, one atomic publication last."""
 import json
+import sys
 import threading
 import re
 from app.worker.configuration import ModelUnavailable, select_model
@@ -45,7 +46,7 @@ def process_attempt(settings, config, job, stop):
         if stop.is_set() or cancel.is_set() or not owned(database, job, owner):
             raise ProcessCancelled("Attempt stopped or ownership changed")
         with connect(database) as db, db:
-            db.execute("""UPDATE jobs SET stage=?, progress_percent=NULL
+            db.execute("""UPDATE jobs SET stage=?, progress_percent=NULL, current_memory_mib=NULL
                 WHERE id=? AND worker_id=? AND status='running'""",
                        (value, job["id"], owner))
             if snapshot:
@@ -93,7 +94,7 @@ def process_attempt(settings, config, job, stop):
         progress_pattern = (rb"(?m)^recue_progress=(\d{1,3})%\r?\n" if engine == qwen3.ENGINE
                             else rb"progress\s*=\s*(\d{1,3})%")
 
-        def report(cpu, peak_memory):
+        def report(cpu, peak_memory, current_memory=None):
             nonlocal previous_swap, pressure_samples, swap_samples
             if cancel.is_set() or stop.is_set():
                 return
@@ -113,10 +114,14 @@ def process_attempt(settings, config, job, stop):
             with connect(database) as db, db:
                 db.execute("""UPDATE jobs SET progress_percent=CASE
                     WHEN ? > coalesce(progress_percent, -1) THEN ? ELSE progress_percent END,
-                    cpu_percent=?, peak_memory_mib=?, error_message=?
+                    cpu_percent=?, current_memory_mib=?,
+                    peak_memory_mib=coalesce(max(coalesce(peak_memory_mib, 0), ?), peak_memory_mib),
+                    peak_memory_kind=coalesce(?, peak_memory_kind), error_message=?
                     WHERE id=? AND worker_id=? AND status='running'
                       AND stage='transcribing' AND cancel_requested=0""",
-                           (percent, percent, cpu, peak_memory, warning, job["id"], owner))
+                           (percent, percent, cpu, current_memory, peak_memory,
+                            ("rss" if sys.platform == "darwin" else "commit") if peak_memory is not None else None,
+                            warning, job["id"], owner))
 
         recognize, runtime = (qwen3.transcribe, snapshot["qwen3"]) if engine == qwen3.ENGINE else (
             transcribe, config.executable)

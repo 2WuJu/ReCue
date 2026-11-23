@@ -10,7 +10,31 @@ import sys
 import time
 
 
-def run(command, stdout, stderr, timeout, cancel, report, marker, measure_memory=False):
+def sample_tree(parent, previous):
+    import psutil
+
+    rss = cpu = 0
+    samples = {}
+    try:
+        children = psutil.Process(parent).children(recursive=True)
+    except psutil.Error:
+        return None, None, previous
+    for child in children:
+        try:
+            with child.oneshot():
+                times = child.cpu_times()
+                use = times.user + times.system
+                identity = (child.pid, child.create_time())
+                memory = child.memory_info().rss
+        except psutil.Error:
+            continue
+        cpu += max(0, use - previous.get(identity, 0))
+        rss += memory
+        samples[identity] = use
+    return (cpu, rss / 1024 ** 2, samples) if samples else (None, None, previous)
+
+
+def run(command, stdout, stderr, timeout, cancel, report, marker, *, measure_memory, report_interval):
     from app.processes import ProcessCancelled, ProcessCleanupError
 
     if marker is not None:
@@ -35,11 +59,11 @@ def run(command, stdout, stderr, timeout, cancel, report, marker, measure_memory
         raise
     with guardian.stdin, guardian.stdout:
         try:
-            if measure_memory:
-                import psutil
-            interval = .1 if measure_memory else 1
-            next_report = time.monotonic() + interval
-            peak = 0
+            reported_at = time.monotonic()
+            next_sample = reported_at
+            peak = current = None
+            cpu, previous = 0, {}
+            has_cpu = False
             while guardian.poll() is None:
                 if cancel is not None and cancel.is_set():
                     raise ProcessCancelled("Local processing cancelled")
@@ -47,21 +71,18 @@ def run(command, stdout, stderr, timeout, cancel, report, marker, measure_memory
                 remaining = deadline - now
                 if remaining <= 0:
                     raise subprocess.TimeoutExpired(command, timeout)
-                if report and now >= next_report:
-                    if measure_memory:
-                        try:
-                            children = psutil.Process(guardian.pid).children(recursive=True)
-                            rss = 0
-                            for child in children:
-                                try:
-                                    rss += child.memory_info().rss
-                                except psutil.Error:
-                                    continue
-                            peak = max(peak, rss / 1024 ** 2)
-                        except psutil.Error:
-                            pass
-                    report(None, peak or None)
-                    next_report = now + interval
+                if report and measure_memory and now >= next_sample:
+                    elapsed_cpu, current, previous = sample_tree(guardian.pid, previous)
+                    if current is not None:
+                        peak = max(peak or 0, current)
+                    if elapsed_cpu is not None:
+                        cpu += elapsed_cpu
+                        has_cpu = True
+                    next_sample = now + .1
+                if report and now - reported_at >= report_interval:
+                    percent = 100 * cpu / ((now - reported_at) * (os.cpu_count() or 1))
+                    report(min(100, percent) if has_cpu else None, peak, current)
+                    reported_at, cpu, has_cpu = now, 0, False
                 time.sleep(min(remaining, .05))
         finally:
             guardian.stdin.close()
@@ -72,6 +93,8 @@ def run(command, stdout, stderr, timeout, cancel, report, marker, measure_memory
             if code or (marker is not None and marker.exists()):
                 raise ProcessCleanupError("macOS tool cleanup is unconfirmed; inspect the tool log")
         result = json.load(guardian.stdout)
+    if report and measure_memory and peak is not None:
+        report(None, peak, None)
     if "error" in result:
         raise OSError(result["error"])
     if result["returncode"]:

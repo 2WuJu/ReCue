@@ -31,7 +31,9 @@ class JobView(BaseModel):
     wait_reason: str | None = None
     progress_percent: int | None = None
     cpu_percent: float | None = None
+    current_memory_mib: float | None = None
     peak_memory_mib: float | None = None
+    peak_memory_kind: Literal["rss", "commit"] | None = None
     started_at: int | None
     finished_at: int | None
     error_code: str | None
@@ -44,6 +46,7 @@ class JobView(BaseModel):
 
 class MediaView(BaseModel):
     id: UUID
+    request_id: UUID | None = None
     display_name: str
     media_type: Literal["audio", "video"] | None
     duration_ms: int | None
@@ -198,11 +201,9 @@ def media_router(settings):
             if body is None:
                 item = get_media(settings.database, str(media_id))
                 job = item["latest_job"] if item else None
-                if job and job["status"] in {"failed", "interrupted"}:
-                    if job["requested_model"] is None:
-                        default = require_model(settings, None)
-                    else:
-                        require_model(settings, job["requested_model"], allow_offline=True)
+                if (job and job["status"] in {"failed", "interrupted"}
+                        and not (job["requested_model"] or job["model"])):
+                    default = require_model(settings, None)
             job_id = retry(settings.database, str(media_id), model, default_model=default)
         except ModelDisabled as exc:
             raise ServiceError(409, "model_disabled", "原模型已停用，请更换模型") from exc

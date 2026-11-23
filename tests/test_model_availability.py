@@ -11,7 +11,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
 from app.config import Settings
 from app.repositories.database import connect, migrate
-from app.repositories.queue import ModelDisabled, change_queued_model, claim_next, received, set_model_disabled
+from app.repositories.queue import (
+    ModelDisabled, change_queued_model, claim_next, fail_owned, received, retry, set_model_disabled,
+)
 from app.worker.configuration import file_signature, model_catalog, model_wait_reasons
 
 
@@ -91,3 +93,13 @@ class ModelAvailabilityTests(unittest.TestCase):
         self.assertIn("停用", self.job(queued)["wait_reason"])
         change_queued_model(self.db, "first", "small")
         self.assertEqual(self.claim(6000)["requested_model"], "small")
+
+    def test_legacy_job_resolves_default_at_claim_and_keeps_it_on_retry(self):
+        queued = self.enqueue("legacy", None)
+        self.assertIsNone(self.job(queued)["requested_model"])
+        self.assertIsNone(self.claim(2000))
+        job = self.claim(6000)
+        self.assertEqual(job["requested_model"], "large")
+        fail_owned(self.db, job["id"], "worker", "failed", "fixture")
+        attempt = retry(self.db, "legacy", default_model="small")
+        self.assertEqual(self.job(attempt)["requested_model"], "large")

@@ -18,6 +18,7 @@ from app.repositories.database import connect, migrate
 from app.storage.uploads import recover_uploads
 from app.services.maintenance import maintain_deletions, maintain_uploads
 from app.worker.configuration import WORKER_HEARTBEAT_TTL
+from app.worker.resources import host_memory
 
 
 class WorkerHealth(BaseModel):
@@ -32,6 +33,8 @@ class Health(BaseModel):
     ffmpeg_available: bool
     model_file_available: bool
     transcription_ready: bool
+    available_memory_mib: int | None = None
+    total_memory_mib: int | None = None
 
 
 def create_app(settings: Settings | None = None):
@@ -89,12 +92,14 @@ def create_app(settings: Settings | None = None):
         state = "offline"
         if row and row["state"] != "stopped" and age < WORKER_HEARTBEAT_TTL:
             state = row["state"]
+        available, total = host_memory()
         return Health(status="ok", database="ok",
                       worker=WorkerHealth(status=state, heartbeat_age_seconds=age),
                       ffmpeg_available=shutil.which(settings.ffmpeg) is not None,
                       model_file_available=(state == "processing" or
                                             bool(settings.model_path and settings.model_path.is_file())),
-                      transcription_ready=state == "processing")
+                      transcription_ready=state == "processing",
+                      available_memory_mib=available, total_memory_mib=total)
 
     if (settings.frontend_dir / "assets").is_dir():
         app.mount("/assets", StaticFiles(directory=settings.frontend_dir / "assets"), name="assets")

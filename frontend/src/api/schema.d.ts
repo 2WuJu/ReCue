@@ -263,6 +263,10 @@ export interface components {
             model_file_available: boolean;
             /** Transcription Ready */
             transcription_ready: boolean;
+            /** Available Memory Mib */
+            available_memory_mib?: number | null;
+            /** Total Memory Mib */
+            total_memory_mib?: number | null;
         };
         /** JobView */
         JobView: {
@@ -290,8 +294,12 @@ export interface components {
             progress_percent?: number | null;
             /** Cpu Percent */
             cpu_percent?: number | null;
+            /** Current Memory Mib */
+            current_memory_mib?: number | null;
             /** Peak Memory Mib */
             peak_memory_mib?: number | null;
+            /** Peak Memory Kind */
+            peak_memory_kind?: ("rss" | "commit") | null;
             /** Started At */
             started_at: number | null;
             /** Finished At */
@@ -323,6 +331,8 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** Request Id */
+            request_id?: string | null;
             /** Display Name */
             display_name: string;
             /** Media Type */

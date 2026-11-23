@@ -75,7 +75,7 @@ def prepare(source: Path, output_dir: Path, *, ffmpeg="ffmpeg", ffprobe="ffprobe
     def encode(label, command, duration, start, end):
         report = None
         if progress is not None and duration is not None and duration > 0:
-            def report(_cpu, _memory):
+            def report(_cpu, _peak, _current):
                 matches = re.findall(rb"(?m)^out_time_us=(-?\d+)\r?\n",
                                      tool_log_tail(output_dir / f"{label}.stdout"))
                 if matches:

@@ -53,7 +53,8 @@ def transcribe(audio: Path, model: Path, executable: Path, output_dir: Path,
     # No -d truncation: the input file is the exact processing boundary.
     try:
         with (output_dir / "stdout.log").open("xb") as stdout, (output_dir / "stderr.log").open("xb") as stderr:
-            run_tool(command, stdout=stdout, stderr=stderr, timeout=timeout, cancel=cancel, report=report)
+            run_tool(command, stdout=stdout, stderr=stderr, timeout=timeout, cancel=cancel,
+                     report=report, measure_memory=report is not None, report_interval=1)
         payload = json.loads(prefix.with_suffix(".json").read_text(encoding="utf-8"))
     except subprocess.TimeoutExpired as exc:
         raise TranscriptionError("Local recognition timed out") from exc

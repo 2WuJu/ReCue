@@ -67,7 +67,8 @@ class ProgressHTTPTests(HTTPAPICase):
         with connect(self.database) as db, db:
             db.execute('ALTER TABLE worker_status DROP COLUMN models_json')
             db.execute('DROP TABLE model_controls')
-            for column in ('requested_model', 'cpu_percent', 'peak_memory_mib', 'progress_percent', 'wait_reason'):
+            for column in ('requested_model', 'cpu_percent', 'peak_memory_mib', 'progress_percent',
+                           'wait_reason', 'current_memory_mib', 'peak_memory_kind'):
                 db.execute(f'ALTER TABLE jobs DROP COLUMN {column}')
             db.execute('DROP TABLE deleted_uploads')
             db.execute('ALTER TABLE media DROP COLUMN delete_error')

@@ -34,7 +34,8 @@ def tool_log_tail(path):
         return stream.read(4096)
 
 
-def run_tool(command, *, stdout, stderr, timeout, cancel=None, report=None, measure_memory=False):
+def run_tool(command, *, stdout, stderr, timeout, cancel=None, report=None,
+             measure_memory=False, report_interval=None):
     """Run an argument array with file-backed output, never a shell or a pipe.
 
     cancel is an optional threading.Event. Return only after the entire job is
@@ -51,7 +52,9 @@ def run_tool(command, *, stdout, stderr, timeout, cancel=None, report=None, meas
     if sys.platform == "darwin":
         from app._macos_process import run
 
-        return run(command, stdout, stderr, timeout, cancel, report, _outer_job.get(), measure_memory)
+        interval = report_interval if report_interval is not None else (.1 if measure_memory else 1)
+        return run(command, stdout, stderr, timeout, cancel, report, _outer_job.get(),
+                   measure_memory=measure_memory, report_interval=interval)
     if os.name != "nt":
         raise OSError("Contained tool execution requires Windows 10+ or macOS")
     from app._windows_process import ToolJob
@@ -64,7 +67,8 @@ def run_tool(command, *, stdout, stderr, timeout, cancel=None, report=None, meas
             if report and now - sampled_at >= 1:
                 cpu_seconds, peak_memory = job.resources()
                 percent = 100 * (cpu_seconds - previous_cpu) / ((now - sampled_at) * (os.cpu_count() or 1))
-                report(min(100, max(0, percent)), peak_memory)
+                resident = job.resident_memory() if measure_memory else None
+                report(min(100, max(0, percent)), peak_memory or None, resident)
                 sampled_at, previous_cpu = now, cpu_seconds
             if cancel is not None and cancel.is_set():
                 raise ProcessCancelled("Local processing cancelled")
@@ -73,7 +77,7 @@ def run_tool(command, *, stdout, stderr, timeout, cancel=None, report=None, meas
             code = job.wait(50)
             if code is not None:
                 if measure_memory and report:
-                    report(None, job.resources()[1])
+                    report(None, job.resources()[1] or None, None)
                 if code:
                     raise subprocess.CalledProcessError(code, command)
                 return

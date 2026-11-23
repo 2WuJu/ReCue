@@ -135,7 +135,8 @@ def run_recognition(audio, model, runtime, work, *, timeout, cancel, report, pro
     else:
         work.mkdir(parents=True, exist_ok=False)
         with (work / "stdout.log").open("wb") as stdout, (work / "stderr.log").open("wb") as stderr:
-            run_tool(command, stdout=stdout, stderr=stderr, timeout=timeout, cancel=cancel, report=report)
+            run_tool(command, stdout=stdout, stderr=stderr, timeout=timeout, cancel=cancel,
+                     report=report, measure_memory=report is not None, report_interval=1)
     return json.loads(output.read_text(encoding="utf-8"))
 
 

@@ -17,11 +17,16 @@ class MemoryPressure(ValueError):
     pass
 
 
-def available_memory():
+def host_memory():
     try:
-        return psutil.virtual_memory().available // MIB
+        memory = psutil.virtual_memory()
+        return memory.available // MIB, memory.total // MIB
     except (OSError, psutil.Error):
-        return None
+        return None, None
+
+
+def available_memory():
+    return host_memory()[0]
 
 
 def swap_written():
