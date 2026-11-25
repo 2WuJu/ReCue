@@ -71,16 +71,26 @@ function Metrics({ item, busy, change }: { item: Media; busy: boolean; change?: 
     const kind = job.peak_memory_kind === 'rss' ? '峰值驻留内存（采样）' : '峰值提交内存';
     resources.push(`${kind} ${memory(job.peak_memory_mib)}`);
   }
+  const model = jobModel(item);
+  const elapsed = job.finished_at == null ? null : formatTime(Math.max(0, job.finished_at - job.created_at));
+  if (job.status === 'succeeded') {
+    if (!elapsed && !resources.length) return model ?? null;
+    return <details className="task-completed-details">
+      <summary aria-label={model ? `${model}，转写详情` : undefined}>{model ?? '转写详情'}</summary>
+      {elapsed && <div>总耗时 {elapsed}</div>}
+      {!!resources.length && <div>{resources.join(' · ')}</div>}
+    </details>;
+  }
   const detail = job.wait_reason ?? job.error_message;
   return <>
-    {(jobModel(item) || change) && <div className="task-model-detail">
-      <span>{jobModel(item) ?? '主机默认'}</span>
+    {(model || change) && <div className="task-model-detail">
+      <span>{model ?? '主机默认'}</span>
       {change && <button className="task-action" disabled={busy} aria-label={`更换模型 ${item.display_name}`}
         onClick={change}>更换模型</button>}
     </div>}
     {detail && <div>{detail}</div>}
     {running ? <div title="从入队开始，包含排队时间"><ElapsedTime key={job.id} createdAt={job.created_at} /></div> :
-      job.finished_at != null ? <div>总耗时 {formatTime(Math.max(0, job.finished_at - job.created_at))}</div> : null}
+      elapsed && <div>总耗时 {elapsed}</div>}
     {progressLabel && <>
       <div>{job.progress_percent == null ? `正在获取${progressLabel}` : `${progressLabel} ${job.progress_percent}%`}</div>
       <progress aria-label={progressLabel} value={job.progress_percent ?? undefined} max={100} />
@@ -104,12 +114,21 @@ export function TaskRow({ name, audio, duration, imported, details, state, actio
   details?: ReactNode; state: [string, string]; action?: ReactNode; deletion?: ReactNode;
 }) {
   const date = imported == null ? null : new Date(imported);
-  return <div className="task-row" role="listitem">
+  const importedLabel = date?.toLocaleString('zh-CN', {
+    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  }) ?? '—';
+  const durationLabel = formatTime(duration ?? null);
+  const completed = state[1] === 'success';
+  return <div className={completed ? 'task-row task-row-completed' : 'task-row'} role="listitem">
     <TaskFile name={name} audio={audio} />
-    <span className="task-meta">{formatTime(duration ?? null)}</span>
-    {date ? <time className="task-meta" dateTime={date.toISOString()}>{date.toLocaleString('zh-CN', {
-      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
-    })}</time> : <span className="task-meta">—</span>}
+    <span className="task-meta">{durationLabel}</span>
+    {date ? <time className="task-meta" dateTime={date.toISOString()}>{importedLabel}</time> :
+      <span className="task-meta">—</span>}
+    {completed && <div className="task-completed-meta">
+      <span>时长 {durationLabel}</span>
+      {date ? <time dateTime={date.toISOString()}>导入 {importedLabel}</time> :
+        <span>导入 {importedLabel}</span>}
+    </div>}
     <div className="task-metrics">{details}</div>
     <span className="task-status-badge" data-tone={state[1]}>{state[0]}</span>
     <div className="task-row-actions"><div>{action}</div>{deletion}</div>
@@ -126,7 +145,7 @@ export function MediaRow({ item, busy, retry, change, remove }: {
     duration={item.duration_ms} imported={item.created_at} state={mediaStatus(item)}
     details={<Metrics item={item} busy={busy} change={waitingForModel(item) || retryable(item) ? change : undefined} />}
     action={active && item.latest_job?.status === 'succeeded' ?
-      <a className="task-action" aria-label={`阅读 ${item.display_name}`} href={`#${item.id}`}>阅读</a> :
+      <a className="task-action task-read" aria-label={`阅读 ${item.display_name}`} href={`#${item.id}`}>阅读</a> :
       retryable(item) ? <button className="task-action" disabled={busy}
         aria-label={`重试 ${item.display_name}`} onClick={retry}>重试</button> : null}
     deletion={<button className="task-action task-delete" disabled={busy || item.lifecycle === 'deleting'}

@@ -7,12 +7,12 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Query
-from pydantic import BaseModel, Field, StrictBool
+from pydantic import BaseModel, Field, StrictBool, field_validator
 
 from app.api.uploads import ErrorResponse
 from app.errors import ServiceError
 from app.repositories.media import get_media, list_media
-from app.repositories.transcripts import get_transcript
+from app.repositories.transcripts import get_transcript, update_segment
 from app.repositories.progress import progress
 from app.repositories.queue import MediaNotFound, ModelDisabled, QueueConflict, change_queued_model, retry
 from app.services.uploads import require_model, storage_error
@@ -83,6 +83,20 @@ class Transcript(BaseModel):
     media_id: UUID
     version: int
     segments: list[TranscriptSegment]
+
+
+class SegmentEdit(BaseModel):
+    version: Annotated[int, Field(strict=True, ge=1)]
+    text: Annotated[str, Field(min_length=1, max_length=10000)]
+
+    @field_validator("text")
+    @classmethod
+    def clean_text(cls, value):
+        value = value.strip()
+        if not value or "\0" in value:
+            raise ValueError("片段文字不能为空或包含空字符")
+        value.encode("utf-8")
+        return value
 
 
 class ArticlePart(BaseModel):
@@ -243,6 +257,22 @@ def media_router(settings):
             raise ServiceError(404, "media_not_found", "媒体不存在")
         if result.get("ready") is False:
             raise ServiceError(409, "transcript_not_ready", "讲稿尚未发布", True)
+        return Transcript.model_validate(result)
+
+    @router.put("/api/media/{media_id}/transcript/segments/{segment_id}", response_model=Transcript,
+                responses={**errors, **{code: {"model": ErrorResponse} for code in (404, 409)}},
+                summary="修订单个讲稿片段的文字并保留其时间轴")
+    def edit_segment(media_id: UUID, segment_id: UUID, body: SegmentEdit):
+        try:
+            result = update_segment(settings.database, str(media_id), str(segment_id), body.version, body.text)
+        except MediaNotFound as exc:
+            raise ServiceError(404, "media_not_found", "媒体不存在") from exc
+        except KeyError as exc:
+            raise ServiceError(404, "segment_not_found", "讲稿片段已不存在，请重新打开讲稿") from exc
+        except QueueConflict as exc:
+            raise ServiceError(409, "transcript_changed", "讲稿已变化，请重新打开讲稿后再编辑") from exc
+        except sqlite3.Error as exc:
+            raise storage_error(exc) from exc
         return Transcript.model_validate(result)
 
     @router.post("/api/media/{media_id}/article", response_model=Article,

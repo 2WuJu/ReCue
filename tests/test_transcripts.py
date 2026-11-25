@@ -1,4 +1,5 @@
 """Transaction and HTTP checks; metadata examples do not establish ASR quality."""
+import json
 from pathlib import Path
 import sqlite3
 import sys
@@ -91,6 +92,36 @@ class TranscriptTests(unittest.TestCase):
 
 
 class TranscriptHTTPTests(HTTPAPICase):
+    def test_edit_persists_and_stale_writes_preserve_segment_identity_and_timing(self):
+        media_id = str(uuid4())
+        database = self.data / "recue.sqlite3"
+        path = f"/api/media/{media_id}/transcript"
+        received(database, request_id=str(uuid4()), media_id=media_id,
+                 display_name="test.wav", source_path=f"media/{media_id}/source", size_bytes=100)
+        job = claim_next(database, "owner")
+        publish(database, job["id"], "owner", duration_ms=1000, media_type="audio",
+                segments=[{"start_ms": 150, "end_ms": 900, "text": "原来的文字"}],
+                engine="test-metadata", model="not-asr", processing_version="test")
+        _, original = self.http("GET", path)
+        segment = original["segments"][0]
+        edit_path = f"{path}/segments/{segment['id']}"
+
+        def edit(text, version=original["version"], target=edit_path):
+            return self.http("PUT", target, json.dumps({"version": version, "text": text}),
+                             {"Content-Type": "application/json"})
+
+        self.assertEqual(edit("  \n  ")[0], 422)
+        self.assertEqual(edit("有效文字", target=f"{path}/segments/{uuid4()}")[0], 404)
+        status, edited = edit("校订后的文字😀")
+        self.assertEqual(status, 200)
+        self.assertEqual(edited["segments"], [{**segment, "text": "校订后的文字😀"}])
+        self.assertEqual(edited["version"], original["version"] + 1)
+        self.assertEqual(edit("校订后的文字😀"), (200, edited))
+        self.assertEqual(edit("过期标签页的修改")[0], 409)
+        self.stop()
+        self.start()
+        self.assertEqual(self.http("GET", path), (200, edited))
+
     def test_unknown_pending_published_and_restart(self):
         media_id = str(uuid4())
         path = f"/api/media/{media_id}/transcript"

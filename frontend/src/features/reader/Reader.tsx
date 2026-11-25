@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react';
 import { formatTime, message, request, type Media, type Transcript, type Progress, type Article } from '../../api/client';
 import { activeSegment, searchTranscript, connectProgressWriter } from './model';
 
@@ -20,11 +20,21 @@ export function Reader({ mediaId }: { mediaId: string }) {
   const [revision, setRevision] = useState(0), [ready, setReady] = useState(false);
   const [active, setActive] = useState(-1), [following, setFollowing] = useState(true);
   const [query, setQuery] = useState(''), [selected, setSelected] = useState(0), [completed, setCompleted] = useState(false);
+  const [editing, setEditing] = useState<{ segment: Transcript['segments'][number]; version: number } | null>(null);
+  const [draft, setDraft] = useState(''), [editError, setEditError] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false), [editStatus, setEditStatus] = useState('');
+  const editDialog = useRef<HTMLDialogElement>(null);
   const player = useRef<HTMLMediaElement | null>(null), sentences = useRef<HTMLDivElement | null>(null);
+  const segments = useRef<Transcript['segments']>([]);
   const restored = useRef(false), save = useRef<(() => void) | null>(null);
   const programScroll = useRef<number | null>(null);
   const hits = useMemo(() => searchTranscript(data?.transcript.segments ?? [], query), [data, query]);
   const currentHit = hits[selected];
+  const mediaDetails = data?.media;
+  useEffect(() => { segments.current = data?.transcript.segments ?? []; }, [data?.transcript]);
+  useEffect(() => {
+    if (editing) editDialog.current?.showModal();
+  }, [editing]);
   useEffect(() => { setArticle(null); setArticleError(''); }, [mediaId, data]);
   useEffect(() => {
     if (view !== 'article' || !data || article) return;
@@ -49,7 +59,7 @@ export function Reader({ mediaId }: { mediaId: string }) {
     return () => controller.abort();
   }, [mediaId, revision]);
   useEffect(() => {
-    if (!data) return;
+    if (!mediaDetails) return;
     const media = player.current!;
     let disposed = false, frame = 0;
     const channel = connectProgressWriter(mediaId, value => request(`/api/media/${mediaId}/progress`, {
@@ -57,13 +67,13 @@ export function Reader({ mediaId }: { mediaId: string }) {
     }), error => { if (!disposed) setSaveError(error ? `进度保存失败：${message(error)}` : ''); });
     const flush = () => {
       if (!restored.current || !Number.isFinite(media.currentTime)) return;
-      const duration = data.media.duration_ms!;
+      const duration = mediaDetails.duration_ms!;
       const ended = media.ended || media.currentTime * 1000 >= duration;
       channel.write({ position_ms: ended ? duration : Math.min(duration, Math.max(0, Math.round(media.currentTime * 1000))), completed: ended });
       setCompleted(ended);
     };
     save.current = flush;
-    const sync = () => setActive(activeSegment(data.transcript.segments, media.currentTime * 1000));
+    const sync = () => setActive(activeSegment(segments.current, media.currentTime * 1000));
     const seeked = () => { sync(); flush(); };
     const tick = () => { sync(); frame = requestAnimationFrame(tick); };
     const play = () => { cancelAnimationFrame(frame); tick(); };
@@ -81,7 +91,34 @@ export function Reader({ mediaId }: { mediaId: string }) {
       media.removeEventListener('ended', pause); window.removeEventListener('pagehide', flush);
       document.removeEventListener('visibilitychange', hidden);
     };
-  }, [data, mediaId]);
+  }, [mediaDetails, mediaId]);
+  function openEdit(segment: Transcript['segments'][number]) {
+    if (!data) return;
+    setDraft(segment.text);
+    setEditError('');
+    setEditStatus('');
+    setEditing({ segment, version: data.transcript.version });
+  }
+  async function saveEdit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editing || savingEdit || !draft.trim()) return;
+    setSavingEdit(true);
+    setEditError('');
+    try {
+      const transcript = await request<Transcript>(`/api/media/${mediaId}/transcript/segments/${editing.segment.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version: editing.version, text: draft }),
+      });
+      setSelected(0);
+      setData(previous => previous && { ...previous, transcript });
+      setEditStatus('讲稿已保存');
+      editDialog.current?.close();
+    } catch (error) {
+      setEditError(message(error));
+    } finally {
+      setSavingEdit(false);
+    }
+  }
   function scrollTo(index: number, hit?: number) {
     const pane = sentences.current, row = pane?.querySelector<HTMLElement>(`[data-segment="${index}"]`);
     const target = hit === undefined ? row : pane?.querySelector<HTMLElement>(`[data-hit="${hit}"]`);
@@ -142,10 +179,15 @@ export function Reader({ mediaId }: { mediaId: string }) {
           if (!event.repeat) play();
         }}>{text(index, segment.text.slice(part.start, part.end), part.start)}{part.suffix}</span>;
     }
-    return <button key={segment.id} data-segment={index} aria-current={playing ? 'true' : undefined}
-      className={playing ? 'sentence playing' : 'sentence'} disabled={!ready} onClick={play}>
-      <time>{formatTime(segment.start_ms)}</time><span>{text(index, segment.text)}</span>
-    </button>;
+    const time = formatTime(segment.start_ms);
+    return <div key={segment.id} className="sentence-row">
+      <button data-segment={index} aria-current={playing ? 'true' : undefined}
+        className={playing ? 'sentence playing' : 'sentence'} disabled={!ready} onClick={play}>
+        <time>{time}</time><span>{text(index, segment.text)}</span>
+      </button>
+      <button className="sentence-edit" aria-label={`编辑 ${time} 片段`}
+        onClick={() => openEdit(segment)}>编辑</button>
+    </div>;
   }
 
   return <><div className="reader-head"><a className="back" href="#" aria-label="返回媒体列表">←</a><h1 title={data?.media.display_name}>{data?.media.display_name ?? '讲稿阅读'}</h1></div>
@@ -166,11 +208,25 @@ export function Reader({ mediaId }: { mediaId: string }) {
         <button aria-label="下一个匹配" disabled={!hits.length} onClick={() => { setFollowing(false); setSelected(n => (n + 1) % hits.length); }}>↓</button>
       </div>
       <div className="follow-tools"><span className="muted">{following ? '正在跟随播放' : '自由阅读 · 跟随已暂停'}</span><button onClick={() => { setFollowing(true); scrollTo(active); }}>回到当前播放句</button></div>
+      <span className="reader-edit-status" role="status">{editStatus}</span>
       <div className={`sentences${view === 'article' ? ' article-view' : ''}`} ref={sentences} tabIndex={0} aria-label="讲稿内容" onScroll={event => {
         const expected = programScroll.current; programScroll.current = null;
         if (expected === null || Math.abs(event.currentTarget.scrollTop - expected) > 1) setFollowing(false);
       }} onWheel={() => setFollowing(false)} onTouchMove={() => setFollowing(false)} onPointerDown={event => { if (event.target === event.currentTarget) setFollowing(false); }} onKeyDown={event => { if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) setFollowing(false); }}>
         {data.transcript.segments.length ? (view === 'article' ? article ? article.paragraphs.map((parts, paragraph) => <p className="transcript-paragraph" key={paragraph}>{parts.map((part, key) => renderSegment(part.segment, part, key))}</p>) : articleError ? <div className="error" role="alert">{articleError} <button onClick={() => setArticleRevision(n => n + 1)}>重新整理</button></div> : <div className="empty" role="status">正在本地补充标点并整理段落…</div> : data.transcript.segments.map((_, index) => renderSegment(index))) : <div className="empty">未识别到语音，可播放原内容核对音轨。</div>}
       </div></section></div>}
+      {editing && <dialog className="segment-dialog" ref={editDialog} aria-labelledby="segment-edit-title"
+        onClose={() => setEditing(null)} onCancel={event => { if (savingEdit) event.preventDefault(); }}>
+        <form onSubmit={saveEdit}>
+          <h2 id="segment-edit-title">编辑 {formatTime(editing.segment.start_ms)} 片段</h2>
+          <textarea aria-labelledby="segment-edit-title" autoFocus required rows={5} maxLength={10000}
+            value={draft} readOnly={savingEdit} onChange={event => setDraft(event.target.value)} />
+          {editError && <p className="error" role="alert">{editError}</p>}
+          <div className="segment-dialog-actions">
+            <button type="button" disabled={savingEdit} onClick={() => editDialog.current?.close()}>取消</button>
+            <button type="submit" disabled={savingEdit || !draft.trim()}>{savingEdit ? '保存中…' : '保存'}</button>
+          </div>
+        </form>
+      </dialog>}
   </>;
 }

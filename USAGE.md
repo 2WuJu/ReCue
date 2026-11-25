@@ -128,6 +128,7 @@ API 启动及运行中每小时扫描遗留上传文件，与上传共用系统�
 | `GET /api/media/{media_id}` | 媒体元数据和 `latest_job`，含真实状态、阶段、attempt、错误和处理配置，不暴露服务端路径 |
 | `POST /api/media/{media_id}/retry` | 仅 active 且失败/中断的媒体可重试，新建 attempt，返回 201；并发重复或冲突 409，不存在 404 |
 | `GET /api/media/{media_id}/transcript` | 完整发布的 version 和稳定片段 `id/sequence/start_ms/end_ms/text`；未就绪 409，不存在 404 |
+| `PUT /api/media/{media_id}/transcript/segments/{segment_id}` | 以 `{"version": 1, "text": "修订后的文字"}` 更新单个片段并返回完整讲稿。修订保留片段 ID、顺序和起止时间，版本冲突返回 409 |
 | `GET /api/media/{media_id}/playback` | 只提供 active 且最新任务成功的已发布 MP4/M4A；支持 HEAD、Range 200/206/416；未就绪 409，不存在 404，副本缺失 503 |
 | `GET /api/health` | API、数据库、worker 和转写配置就绪状态 |
 | `GET /api/models` | 当前转写进程已验证的模型文件名列表。转写进程未就绪时返回空数组 |

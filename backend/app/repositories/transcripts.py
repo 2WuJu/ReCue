@@ -2,7 +2,7 @@
 from uuid import uuid4
 
 from app.repositories.database import connect
-from app.repositories.queue import QueueConflict, now_ms
+from app.repositories.queue import MediaNotFound, QueueConflict, now_ms
 from app.transcription.segments import validate_segments
 
 
@@ -27,7 +27,7 @@ def publish(database, job_id, worker_id, *, duration_ms, media_type, segments,
         db.execute(
             """INSERT INTO transcripts(media_id, job_id, version, published_at) VALUES (?, ?, ?, ?)
                ON CONFLICT(media_id) DO UPDATE SET job_id=excluded.job_id,
-                 version=excluded.version, published_at=excluded.published_at""",
+                 version=MAX(transcripts.version + 1, excluded.version), published_at=excluded.published_at""",
             (media_id, job_id, job["attempt"], now_ms()),
         )
         db.executemany(
@@ -48,19 +48,45 @@ def publish(database, job_id, worker_id, *, duration_ms, media_type, segments,
 def get_transcript(database, media_id):
     with connect(database) as db:
         db.execute("BEGIN")
-        media = db.execute("SELECT lifecycle FROM media WHERE id=?", (media_id,)).fetchone()
-        if not media:
-            return None
-        row = db.execute(
-            """SELECT transcripts.* FROM transcripts JOIN jobs ON jobs.id=transcripts.job_id
-               WHERE transcripts.media_id=? AND jobs.status='succeeded'
-                 AND jobs.attempt=(SELECT MAX(attempt) FROM jobs j WHERE j.media_id=jobs.media_id)""",
-            (media_id,),
-        ).fetchone()
-        if media["lifecycle"] != "active" or not row:
-            return {"ready": False}
-        segments = [dict(item) for item in db.execute(
-            """SELECT id, sequence, start_ms, end_ms, text FROM transcript_segments
-               WHERE media_id=? ORDER BY sequence""", (media_id,),
-        )]
-        return {"media_id": media_id, "version": row["version"], "segments": segments}
+        return read_transcript(db, media_id)
+
+
+def read_transcript(db, media_id):
+    media = db.execute("SELECT lifecycle FROM media WHERE id=?", (media_id,)).fetchone()
+    if not media:
+        return None
+    row = db.execute(
+        """SELECT transcripts.version FROM transcripts JOIN jobs ON jobs.id=transcripts.job_id
+           WHERE transcripts.media_id=? AND jobs.status='succeeded'
+             AND jobs.attempt=(SELECT MAX(attempt) FROM jobs j WHERE j.media_id=jobs.media_id)""",
+        (media_id,),
+    ).fetchone()
+    if media["lifecycle"] != "active" or not row:
+        return {"ready": False}
+    segments = [dict(item) for item in db.execute(
+        """SELECT id, sequence, start_ms, end_ms, text FROM transcript_segments
+           WHERE media_id=? ORDER BY sequence""", (media_id,),
+    )]
+    return {"media_id": media_id, "version": row["version"], "segments": segments}
+
+
+def update_segment(database, media_id, segment_id, version, text):
+    with connect(database) as db, db:
+        db.execute("BEGIN IMMEDIATE")
+        result = read_transcript(db, media_id)
+        if result is None:
+            raise MediaNotFound(media_id)
+        if result.get("ready") is False:
+            raise QueueConflict("Transcript is not ready")
+        segment = next((item for item in result["segments"] if item["id"] == segment_id), None)
+        if segment is None:
+            raise KeyError(segment_id)
+        if segment["text"] == text:
+            return result
+        if result["version"] != version:
+            raise QueueConflict("Transcript version changed")
+        db.execute("UPDATE transcript_segments SET text=? WHERE id=?", (text, segment_id))
+        db.execute("UPDATE transcripts SET version=version+1 WHERE media_id=?", (media_id,))
+        segment["text"] = text
+        result["version"] += 1
+        return result

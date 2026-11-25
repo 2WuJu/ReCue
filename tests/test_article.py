@@ -13,7 +13,7 @@ from app.config import Settings
 from app.errors import ServiceError
 from app.repositories.database import connect, migrate
 from app.repositories.queue import claim_next, received
-from app.repositories.transcripts import get_transcript, publish
+from app.repositories.transcripts import get_transcript, publish, update_segment
 from app.services.article import ArticleFormatter
 from app.transcription.article import contextual_insertions, format_article, restore_insertions
 from http_support import HTTPAPICase
@@ -97,6 +97,25 @@ class ArticleServiceTests(unittest.TestCase):
             self.assertEqual(ArticleFormatter(self.settings).create(self.media_id), article)
             self.assertEqual(inference.call_count, 1)
         self.assertEqual(get_transcript(self.settings.database, self.media_id), original)
+
+    def test_edit_rebuilds_article_offsets_from_current_text(self):
+        database = self.settings.database
+        original = get_transcript(database, self.media_id)
+
+        def format_input(command, **kwargs):
+            segments = json.loads(Path(command[-2]).read_text(encoding="utf-8"))
+            result = format_article(segments, lambda value: value + "。")
+            Path(command[-1]).write_text(json.dumps(result), encoding="utf-8")
+
+        with patch("app.services.article.run_tool", side_effect=format_input) as inference:
+            before = self.formatter.create(self.media_id)
+            updated = update_segment(database, self.media_id, original["segments"][0]["id"],
+                                     original["version"], "已经修订的句子😀")
+            after = self.formatter.create(self.media_id)
+            self.assertEqual(inference.call_count, 2)
+        self.assertNotEqual(before["version"], after["version"])
+        self.assertEqual(after["version"], updated["version"])
+        self.assertEqual(rendered(updated["segments"], after["paragraphs"]), ["已经修订的句子😀。"])
 
     def test_deletion_during_inference_cannot_publish_or_recreate_media(self):
         def deleting(command, **kwargs):
