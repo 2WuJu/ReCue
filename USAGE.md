@@ -1,225 +1,111 @@
-# 使用与 API 参考
+# ReCue 使用手册
 
-返回 [README](README.md)。本文件描述当前已实现接口，完整 Schema 由运行服务的 `/openapi.json` 提供。
-
-```mermaid
-sequenceDiagram
-    participant UI as 客户端 · 浏览器
-    participant API as 服务端 · FastAPI
-    UI->>API: 上传文件 POST /api/media
-    API-->>UI: 返回媒体 ID，任务已入队
-    UI->>API: 刷新媒体列表 GET /api/media
-    API-->>UI: 返回最新处理阶段
-    opt 任务完成后打开阅读页
-        UI->>API: 并行读取媒体详情、讲稿和播放进度
-        API-->>UI: 返回媒体信息、讲稿片段和已保存位置
-        UI->>API: GET /api/media/{id}/playback
-        API-->>UI: 返回媒体数据，支持按字节范围读取
-        UI->>UI: 点击句子，按时间戳定位播放
-        UI->>API: PUT /api/media/{id}/progress 保存位置
-    end
-```
-
-后台领取任务、处理音轨和发布讲稿的步骤见[完整流程图](README.md#一段录音如何变成可点击的讲稿)。安装步骤见[首次启动](README.md#首次启动)。队列停住时见[常见问题](#常见问题)。
+[返回项目首页](README.md)
 
 ## 安装与模型下载
 
-处理电脑需要 [Node.js 与 npm](https://nodejs.org/)（Node 20.19+ 或 22.12+）、[uv](https://docs.astral.sh/uv/getting-started/installation/) 以及 [FFmpeg 和 FFprobe](https://ffmpeg.org/download.html)。将工具加入 PATH，FFmpeg 需支持 libx264 和 AAC。macOS 可用 Homebrew 执行 `brew install ffmpeg`，一次安装两个命令。可用 `ffmpeg -version` 和 `ffprobe -version` 检查当前终端能否调用。项目的 Python 版本和网页依赖由首次启动准备。
+只需在运行 ReCue 的电脑上安装工具和模型。使用浏览器的其他设备无需安装。
 
-| 用途 | 模型与下载 | 配置要求 |
-| --- | --- | --- |
-| 转写 · Whisper CPU | 已实测 [medium Q5_0（539 MB）](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium-q5_0.bin) 和 [large-v3 Q5_0（1.08 GB）](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin)。也可尝试[同仓库的多语言 GGML 权重](https://huggingface.co/ggerganov/whisper.cpp/tree/main) | [whisper.cpp 原生 CLI 和配套库](https://github.com/ggml-org/whisper.cpp/releases)（macOS 可用 [Homebrew](https://formulae.brew.sh/formula/whisper.cpp)），以及一个多语言 `ggml-*.bin` 文件；`.en` 权重仅支持英语 |
-| 转写 · Qwen3-ASR CPU | [0.6B](https://huggingface.co/Qwen/Qwen3-ASR-0.6B/tree/main) 或 [1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B/tree/main)，均需 [Qwen3-ForcedAligner-0.6B](https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B/tree/main) | 分别下载识别和对齐模型的完整目录，保留配置、分词器及全部 `.safetensors` 分片。需要独立的 Python 3.11 环境和 [`qwen-asr==0.0.6`](https://pypi.org/project/qwen-asr/0.0.6/) |
-| 文章补标点 · CT-Transformer | [中英 INT8 权重（约 62 MiB）](https://github.com/k2-fsa/sherpa-onnx/releases/download/punctuation-models/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12-int8.tar.bz2) | 可选，按[文章式文字稿](#文章式文字稿)用脚本下载并校验 |
+1. 安装 [Node.js 与 npm](https://nodejs.org/)（Node 20.19+ 或 22.12+）、[uv](https://docs.astral.sh/uv/getting-started/installation/) 和 [FFmpeg](https://ffmpeg.org/download.html)。FFmpeg 需支持 libx264 和 AAC，并包含 FFprobe。macOS 可用 `brew install ffmpeg`。安装后在新终端运行 `node --version`、`uv --version`、`ffmpeg -version` 和 `ffprobe -version`，确认都能调用。
+2. 准备一个转写模型。第一次使用可从 Whisper medium 开始。
 
-转写当前使用 CPU，面向中文课程及夹杂的英文术语。Whisper 已在 Windows 和 macOS 验证；两款 Qwen3-ASR 已在 Apple Silicon macOS 实测，Windows 已核对 Python 依赖可解析，仍待实机转写验证。Qwen3-ASR 使用 FP32，对内存要求较高。在同一台 Apple Silicon Mac 上转写 65 秒样本时，识别子进程的峰值约为 9 GiB（0.6B）和 14 GiB（1.7B）。转写任务页右上角显示处理电脑当前可用内存。
+   | 模型 | 准备内容 |
+   | --- | --- |
+   | Whisper | 安装 [whisper.cpp CLI](https://github.com/ggml-org/whisper.cpp/releases)（macOS 可用 `brew install whisper-cpp`），下载 [medium Q5_0（539 MB）](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium-q5_0.bin) 或 [large-v3 Q5_0（1.08 GB）](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin)。中文课程请选择多语言权重。 |
+   | Qwen3-ASR | 下载识别和对齐模型，并按[配置 Qwen3-ASR](#配置-qwen3-asr)准备独立环境。 |
 
-### 准备转写配置
-
-- **Whisper**。启动时输入权重文件路径。如果 `whisper-cli` 已在 PATH 上，程序会自动找到它；否则再输入 CLI 路径。
-- **Qwen3-ASR**。先按[下方步骤](#配置-qwen3-asr)安装运行环境，再在启动时输入识别模型目录路径。
-
-配置及文件指纹会写入项目根目录的 `processing.local.json`，之后自动复用。更换默认模型或迁移到另一台电脑时，先停止服务，保留旧配置并改名，再次启动即可重新选择。自定义部署可通过 `RECUE_PROCESSING_CONFIG` 指向现有配置，参见 [Whisper 示例](examples/processing.example.json)和 [Qwen3-ASR 示例](examples/processing.qwen3.example.json)。
+3. 在项目根目录运行 `node recue.mjs`。第一次启动时，请按提示选择访问方式和模型文件。启动器会准备 Python 和网页依赖。使用 Whisper 时，如果找不到 `whisper-cli`，终端会要求输入它的路径。
 
 ### 配置 Qwen3-ASR
 
-在项目根目录执行以下命令，Windows 和 macOS 用法相同。
+下载 [Qwen3-ASR 0.6B](https://huggingface.co/Qwen/Qwen3-ASR-0.6B/tree/main) 或 [1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B/tree/main)，再下载 [Qwen3-ForcedAligner-0.6B](https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B/tree/main)。保留各自的完整目录，包括配置、分词器和全部模型权重。也可从 ModelScope 下载。[Qwen 官方下载说明](https://github.com/QwenLM/Qwen3-ASR#released-models-description-and-download)
+
+把识别模型和对齐模型目录放在同一个父目录下，然后在项目根目录运行：
 
 ```text
 uv venv --no-project --python 3.11 .local/qwen3-runtime
 uv pip install --python .local/qwen3-runtime "qwen-asr==0.0.6"
 ```
 
-也可按 [Qwen 官方下载说明](https://github.com/QwenLM/Qwen3-ASR#released-models-description-and-download)从 ModelScope 下载。将识别模型和 `Qwen3-ForcedAligner-0.6B` 放在同一父目录下。要把 Qwen3-ASR 设为默认模型，可在首次启动时输入识别模型目录。ReCue 会找到同级对齐模型和上面创建的 Python 环境。如果资源放在其他位置，再按提示输入路径。
+在启动提示中输入识别模型目录。ReCue 会查找同级的对齐模型和上面的 Python 环境。若放在其他位置，按提示提供路径。Qwen3-ASR 在 CPU 上运行，需要较多内存，可在「本批转写模型」中查看可用内存和模型要求。
 
-### 管理已安装模型
+### 更换或添加模型
 
-提交前可展开「本批转写模型」，对照处理电脑的可用内存、模型最低门槛和推荐内存。首次使用预选服务端默认模型。每批提交时固定选中的模型，当前浏览器会记住上次提交所用的模型。上次使用的模型暂不可用时，页面会提示并优先选用可用的服务端默认模型。转写进程会发现默认模型及其同目录的 Whisper `ggml-*.bin`。Qwen3-ASR 会从默认模型所在目录、项目的 `models/` 和 `models/qwen3/` 中直接查找模型子目录。已有 Whisper 配置也可以发现 Qwen3-ASR，默认模型继续沿用现有设置。转写进程在空闲时验证已发现或手动登记的模型。无法加载、仅支持英语或验证超时的权重会给出对应状态。短测基于一秒静音，内存估算用于帮助选择模型。对于参考数据不足的模型，列表可显示「内存数据不足」。
+添加模型后可在「本批转写模型」中选择，无需更换默认模型。ReCue 会查找默认 Whisper 模型同目录中的 `ggml-*.bin`，以及项目 `models/`、`models/qwen3/` 和默认 Qwen3 模型所在位置中的 Qwen3 模型目录。添加后若暂时未出现在列表中，请等待当前任务完成，让转写进程验证模型。
 
-服务端会在领取任务前重查当前内存余量。低于推荐余量时可以尝试，明显不足时暂停领取该模型的任务。已排队任务会显示等待原因，恢复后自动继续。也可在受阻任务的处理详情中点击「更换模型」，选择可用模型后重新排队。失败任务的「重试」沿用原模型。
+需要重新选择默认模型时，先停止 ReCue，再把项目根目录的 `processing.local.json` 改名留作备份。重新启动后会提示选择。自定义工具或模型路径可参考 [Whisper 配置示例](examples/processing.example.json)和 [Qwen3-ASR 配置示例](examples/processing.qwen3.example.json)。
 
-在**处理电脑**的 `backend` 目录运行以下命令。若服务使用自定义数据目录，请在同一终端设置相同的 `RECUE_DATA_DIR`：
+## 启动、连接与停止
+
+在项目根目录运行 `node recue.mjs`。看到终端提示「ReCue 网页已就绪」后，在浏览器打开下方显示的地址。保持启动终端运行。
+
+- **仅本机使用**适合只在处理电脑上上传和阅读。直接回车会采用这一选项。
+- **允许局域网访问**会额外显示当前的局域网地址。同一可信网络里的设备可以打开这些地址。
+
+要停止 ReCue，在启动终端按 `Ctrl+C` 并等进程退出。也可以从项目根目录另开终端执行 `node stop.mjs`，等启动终端退出后再重启或备份。如果当时有转写运行，重启后可在任务列表点击「重试」。已排队的任务会继续。
+
+### 局域网访问
+
+首次启动时输入 `2`，让需要访问的设备接入同一个可信网络。在另一台设备的浏览器里打开启动终端标为「局域网打开」的地址。如有多条，请使用连到同一网络的网卡对应的地址。IP 变了就重启 ReCue，使用新显示的地址。
+
+要更改访问方式，运行下面的命令，选择后重启 ReCue。以后仍然使用 `node recue.mjs` 启动。
 
 ```text
-uv run --offline --locked python -m app.model_commands add "/path/to/model.bin"
-uv run --offline --locked python -m app.model_commands check ggml-large-v3-q5_0.bin
-uv run --offline --locked python -m app.model_commands disable ggml-large-v3-q5_0.bin
-uv run --offline --locked python -m app.model_commands enable ggml-large-v3-q5_0.bin
+node recue.mjs configure
 ```
 
-`add` 可登记本地 Whisper 权重文件或 Qwen3-ASR 模型目录。可用 `--name` 为同名模型指定不同的列表名称。`check` 请求转写进程在空闲时重新验证。停用设置保存在本地数据库，即时阻止新任务使用该模型，已领取的任务继续运行。
+如果之前手动设置过 `RECUE_HOST`，请先清除它，再启动以应用保存的设置。macOS 终端或 Git Bash 用 `unset RECUE_HOST`，PowerShell 用 `Remove-Item Env:RECUE_HOST`。ReCue 无需登录，能连上服务的设备可以查看、上传和删除媒体。请只在可信网络开启，并避免把端口转发到公网。
 
-待上传文件显示在拖放区下方。提交后，上传进度和服务端处理状态显示在转写任务列表中。列表中的「已用」和「总耗时」从本次任务入队开始计算，包含排队时间。重试从新任务入队重新计时。识别时，处理详情显示可获取的进度和识别进程树的 CPU 占比、当前驻留内存及峰值。峰值在 macOS 上为采样驻留内存，在 Windows 上为作业提交内存。桌面阅读页可拖动播放器与讲稿之间的分隔条调节比例（20%–80%），也可聚焦后用左右方向键微调，双击分隔条恢复 60/40。比例在当前浏览器保存。窄屏采用上下布局。
+## 上传和转写
 
-Whisper 和 Qwen3-ASR 可以同时出现在「本批转写模型」的选项中。使用默认布局时，将 Qwen3-ASR 及其对齐模型放入上述发现目录，并按前面的步骤创建 `.local/qwen3-runtime`。自定义 Python 或对齐模型路径时，使用 [Qwen3-ASR 示例](examples/processing.qwen3.example.json)中的 `qwen3` 对象。可在 `backend` 目录运行 `uv run --offline --locked python -m app.model_commands fingerprint "/path/to/Qwen3-ForcedAligner-0.6B" --aligner` 计算对齐模型指纹。以 Qwen3 为默认时，加入 Whisper 还需要 Whisper 的 `executable` 和 `executable_sha256`。修改配置后重启。
+1. 打开「转写任务」，拖入或选择音视频。每批最多 5 个文件，单个文件最多 4 GiB、120 分钟。可处理的格式取决于音视频编码。
+2. 核对文件和「本批转写模型」，点击「提交转写」。上传显示「已接收」后可以关闭浏览器，后台会继续处理。若显示「待查回执」，先点击「查询回执」，确认是否收到了文件再决定是否重新上传。
+3. 等状态变为「已完成」，点击「阅读」。一次只转写一个文件，后续任务会排队。任务详情会显示当前阶段、耗时和可获取的进度。
 
-## 部署配置参考
+如果任务显示「等待模型」，可以查看等待原因，等内存释放，或点「更换模型」。失败或中断时，先查看错误详情，再点「重试」。
 
-配置通过启动终端的环境变量传入，当前不自动读取 `.env` 文件。
+## 阅读和复习
 
-| 环境变量 | 默认值 | 用途 |
-| --- | --- | --- |
-| `RECUE_HOST` | `127.0.0.1` | API 监听地址 |
-| `RECUE_PORT` | `4318` | API 端口 |
-| `RECUE_DATA_DIR` | 项目下 `data/` | 数据库、原文件、播放副本与运行记录；自定义时须用绝对路径 |
-| `RECUE_FFMPEG` | `ffmpeg` | FFmpeg 命令或绝对路径；FFprobe 在处理 JSON 中设置 |
-| `RECUE_PROCESSING_CONFIG` | 未设置 | 处理 JSON 的绝对路径，交互启动时自动设置 |
-| `RECUE_MODEL_PATH` | 未设置 | 旧预检兼容项，仅检查文件存在，不能替代处理 JSON |
+- 在「阅读」页搜索讲稿，用上下箭头或 Enter、Shift+Enter 切换结果。点一句话即可跳到相应音视频位置。
+- 播放时页面会跟随当前句。手动滚动后可点击「回到当前播放句」。再次打开媒体时会恢复最近保存的位置，并保持暂停。
+- 桌面上可拖动播放器与讲稿之间的分隔条，双击恢复默认比例。点击「时间轴」里句子旁的「编辑」可修正文字，原有播放定位会保留。
 
-工具、模型、本地配置和数据保存在处理电脑上。依赖与模型准备后，启动使用 `uv --offline --locked`，前端无 CDN；整机断网后的完整流程尚待验收。
+### 文章式文字稿
 
-支持 `--service api` 或 `--service worker` 分开启停；使用同一数据目录并以相同参数停止各自入口。
+「文章」视图会给讲稿补充标点并按段落显示。第一次使用前，在处理电脑联网执行以下命令，下载本地标点模型（约 62 MiB）：
 
-依赖完整性检查：`uv lock --check --offline`、`uv pip check`。其余开发检查见 README。
-
-## 文章式文字稿
-
-阅读页可切换「时间轴」与「文章」。文章使用本地 CT-Transformer 标点模型结合上下文补充标点，再按完整句子与停顿分段，首行缩进。保留原始转写、技术词和时间戳；不会纠正识别错词、总结或改写课程。搜索仍按原始讲稿匹配，文字稿中的句子可点击定位。
-
-首次在处理电脑联网准备一次模型：
-
-```powershell
+```text
 uv sync --locked
 uv run python scripts/setup-punctuation.py
 ```
 
-脚本从 [sherpa-onnx 官方模型发布](https://github.com/k2-fsa/sherpa-onnx/releases/tag/punctuation-models)下载约 62 MiB 的 INT8 模型，验证下载包和模型的固定 SHA-256，保存到 `models/punctuation/model.int8.onnx`。模型不进入 Git。依赖及模型就绪后补标点无需网络；更新依赖和 API 后需重启 ReCue。自定义模型位置可设置 `RECUE_PUNCTUATION_MODEL`，仍须使用该固定模型文件。
+重启 ReCue 后，在阅读页切到「文章」。已有媒体可以直接使用。首次打开会整理并保存结果；之后无需重新上传或重新转写。重要内容可点击文字回听原声。
 
-已有媒体无需重新上传或重新识别。第一次进入文章视图时显示整理状态，完整结果缓存在对应媒体目录，之后直接读取；备份媒体目录会同时备份文字稿，删除媒体也会清理它。缺模型、推理失败或保存失败会显示可重试错误，仍可切换回原始时间轴阅读。模型可能误判标点，重要内容可点击回听原声。
+### 删除媒体
 
-`POST /api/media/{id}/article`：返回 `media_id/version/model/paragraphs`；每段由有序片段构成，片段包含原始讲稿的 `segment` 索引、UTF-16 `start/end` 偏移及追加标点 `suffix`，不生成新的伪精确时间戳。首次整理在受控子进程执行，限制两线程、120 秒；同一 API 同时最多整理一份，繁忙返回 503，可稍后重试。原媒体不存在或讲稿未就绪分别返回 404/409。
-
-## 上传与接收
-
-- `POST /api/media?display_name=URL编码文件名`：请求头 `X-Upload-ID` 为客户端生成的 UUID，`Content-Type: application/octet-stream`，请求体为原始字节，不使用 multipart。
-- 首次完整接收返回 201 及 `request_id/media_id/job_id/status`。`status=received` 只表示保存并入队，音轨、时长、可解码性和转写仍须后台验证。
-- `GET /api/uploads/{request_id}` 查询已完成接收结果。响应不明时先查询；404 表示尚无完整接收记录，上传可能仍在进行。
-- 相同 ID 重放已完成请求返回 200 和原结果，即使内容不同也不会替换原文件；上传新文件必须使用新 ID。不是断点续传。
-- 同时只接收一个新文件，其余返回 409 `upload_busy`。上限为 4 GiB（4,294,967,296 字节），按实际接收字节检查；空文件、超限或中断不入队。磁盘空间不足返回 507，连续 60 秒没有新数据超时。
-- 前端每批最多选择 5 个文件并串行上传。处理阶段只显示真实状态与耗时，不提供估算百分比。
-
-API 启动及运行中每小时扫描遗留上传文件，与上传共用系统锁；活跃上传时跳过扫描。清理 UUID 临时文件及超过 24 小时且无数据库引用的原文件，保留已登记媒体及未知文件，失败留待后续重试。不要手工向服务管理的 UUID 目录放入文件。
-
-## 媒体与任务
-
-| 接口 | 行为 |
-| --- | --- |
-| `GET /api/media?limit=20&cursor=...` | 按 `created_at/id` 倒序，返回 `items/next_cursor`；limit 为 1–100；`next_cursor=null` 表示末页 |
-| `GET /api/media/{media_id}` | 媒体元数据和 `latest_job`，含真实状态、阶段、attempt、错误和处理配置，不暴露服务端路径 |
-| `POST /api/media/{media_id}/retry` | 仅 active 且失败/中断的媒体可重试，新建 attempt，返回 201；并发重复或冲突 409，不存在 404 |
-| `GET /api/media/{media_id}/transcript` | 完整发布的 version 和稳定片段 `id/sequence/start_ms/end_ms/text`；未就绪 409，不存在 404 |
-| `PUT /api/media/{media_id}/transcript/segments/{segment_id}` | 以 `{"version": 1, "text": "修订后的文字"}` 更新单个片段并返回完整讲稿。修订保留片段 ID、顺序和起止时间，版本冲突返回 409 |
-| `GET /api/media/{media_id}/playback` | 只提供 active 且最新任务成功的已发布 MP4/M4A；支持 HEAD、Range 200/206/416；未就绪 409，不存在 404，副本缺失 503 |
-| `GET /api/health` | API、数据库、worker 和转写配置就绪状态 |
-| `GET /api/models` | 当前转写进程已验证的模型文件名列表。转写进程未就绪时返回空数组 |
-
-API 日期和 `started_at` 为 Unix 毫秒；讲稿时间为相对播放起点的整数毫秒。未验证的媒体类型或时长为 null。
-
-## 处理与时间轴
-
-单 worker 使用实例锁与短事务 FIFO 领取任务，保存处理配置快照。每次 attempt 使用独立目录，依次执行真实预处理、CPU 转写、时间校验和讲稿整理，讲稿、播放路径、元数据和成功状态在同一事务发布；失败不公开半成品。
-
-FFmpeg 生成 H.264/AAC MP4（音频为 AAC M4A）及 16 kHz 单声道 PCM。映射为 `source_pts_seconds - source_origin_seconds`，音视频共用原点，保留初始偏移和内部间隙。不删除静音，不平均分配时间。异常转写时间戳拒绝发布。点击讲稿从 `max(0, start_ms - 300)` 开始播放，原始讲稿时间戳不变。
-
-`RECUE_PROCESSING_CONFIG` 指向显式部署 JSON，字段见 [示例](examples/processing.example.json)。worker 校验版本、CPU 后端、工具/模型的 SHA-256、FFmpeg 与 FFprobe；固定中文、8 线程、单处理器。Whisper 禁用 VAD 和分块，Qwen3-ASR 使用引擎自带的分块和强制对齐。缺失或无效时为 `blocked_config`，不领取排队任务。修改后重启 worker，不自动选模型或降级。`health.transcription_ready` 只代表配置就绪，不代表质量达标。
-
-## 停止与恢复
-
-单独重启 API 不影响运行任务。重启 worker 前先确认旧工具进程树清理，再把遗留运行任务标记为 interrupted，排队任务保留；中断任务可手动重试，不承诺从转写中途续算。
-
-`node stop.mjs` 只写停止请求，命令返回不代表服务已经退出。先等启动终端结束，再确认 `runtime/processing.guard` 已由 guardian 清除；异常退出后 guardian 可能还需一段时间。分开启停时分别对原来的 api、worker 启动终端发出停止请求，`--service all` 不会停止分别启动的两个入口。备份前也须停止直接运行的 uvicorn/worker 实例。
-
-`GET /api/health` 的 `status=ok` 表示 API/数据库可用；`worker.status=processing` 和 `transcription_ready=true` 表示处理配置就绪，也可能正在空闲等待队列，不是当前一定有识别任务，更不代表模型质量通过。`offline` 或 `blocked_config` 时不能据 API 可访问判断转写正常。
-
-Windows 工具创建时即纳入 Job Object，超时、取消或宿主退出后清理后代。独立 guardian 保留外层句柄，确认整树退出后才移除 `runtime/processing.guard`。清理失败、guardian 异常退出或断电留下标记时保守阻止启动，错误见 `runtime/guardian.log`；未核实整树退出前不要删除标记。删除运行媒体时先请求取消，工具整树退出后才清理文件；若 worker 异常退出，须在 guardian 确认清理后重启 worker 才能恢复遗留运行状态。
-
-macOS 由独立守护进程为每次工具调用创建进程组，并监视调用者持有的管道。调用者退出、取消、超时或工具退出时，守护进程清理同组进程。转写进程只有在上一次工具清理得到确认后才恢复任务。若 `runtime/processing.guard` 残留，查看该文件中的进程组编号、服务启动终端及对应的私有任务日志。
+在任务列表点「删除」并确认后，原文件、播放副本、讲稿和进度都会清除。删除不可撤销。若显示清理失败，请查看提示，关闭占用文件的程序后再点击「重试删除」。
 
 ## 常见问题
 
-- **队列不动**：检查健康状态和启动终端输出；`blocked_config` 时检查配置绝对路径、文件哈希（小写）、工具路径，修正后重启 worker。
-- **缺少前端**：运行 `node recue.mjs setup` 或 `npm --prefix frontend run build`；不要在服务进行 HTTP 验证时同时重写构建目录。
-- **端口占用**：停止已有实例或设置 `RECUE_PORT`，分开运行的 API 与 worker 使用同一数据目录。
-- **uv 找不到**：按官方说明安装并刷新 PATH；通用入口兼容用户目录 `.local/bin` 的默认安装位置。
-- **停止无效**：核对 `--service` 和绝对路径 `RECUE_DATA_DIR` 是否与启动一致；stop 写入请求后，须等待启动终端退出。
-- **模型没有出现在列表里**：检查服务是否就绪、模型文件是否与默认模型放在同一目录，以及启动终端中该模型的加载结果。添加或替换模型后重启转写进程。
+**另一台电脑打不开。** 确认启动终端显示了「局域网打开」，先在处理电脑上打开同一个地址。如果处理电脑可以打开，检查另一台设备是否连在同一个网络上。访客 Wi-Fi 可能限制设备互访，也请确认处理电脑的防火墙允许可信网络访问该 TCP 端口。
 
-## 搜索与复习
-
-在阅读页搜索当前完整讲稿：中文按字面子串匹配，英文字母忽略大小写，按命中位置计数（含重叠匹配）。↑/↓按钮或 Enter/Shift+Enter 切换结果；搜索只滚动讲稿，点击句子才定位并播放。
-
-播放句显示蓝色底色和左边线；关键词为黄色，当前搜索结果为橙色。静音间隙清除播放高亮。滚轮、触摸滑动、滚动条或翻页键暂停自动跟随，高亮仍会更新；点击“回到当前播放句”恢复跟随。
-
-播放中每 5 秒及暂停、跳转时将进度保存到服务端，保存失败时可重试。重开恢复位置并保持暂停；播放完成后停在末尾，可从头播放。同一标签页串行合并保存请求，多标签页采用最后一次有效写入覆盖。关闭页面时仅尽力补充保存，突然断电或网络中断可能丢失尚未保存的进度。
-
-
-## 删除媒体
-
-列表点击“删除”，确认后原文件、播放副本、讲稿和进度一并清理，无法恢复。排队任务立即撤销；运行任务先取消，确认退出后再清理。删除中不能阅读或重试处理；清理失败会显示原因，关闭占用程序或修复权限后点击“重试删除”。API 重启会继续未完成的删除；删除失败须手动重试。
-
-`DELETE /api/media/{media_id}` 返回 202，表示删除请求已接受，文件可能仍在清理。重复请求安全，包括已不存在的 ID。详情/列表的 lifecycle 为 deleting 或 delete_failed，delete_error 提供清理错误；清理完成后详情返回 404。请求响应丢失时查询列表或安全重试删除。清理忙时可能返回 503，请稍后查询或重试。
-
-删除会保留不含文件名、讲稿和进度的上传 ID 留痕，防止旧请求重放重新创建媒体。对应的上传结果查询和旧 ID 重传返回 410 upload_deleted；若要重新导入，请重新选择文件生成新上传 ID。该查询并非断点续传。
-
-## 停服务备份与恢复
-
-此流程用于同一版本应用的数据恢复。数据库中的媒体路径相对数据目录保存，可以恢复到另一个绝对路径。恢复旧备份会回到备份时的状态，包括之后发生的删除和进度变化；不要把不同时间的数据库与媒体混用，也不要合并覆盖现用数据。
-
-1. 暂停上传，停止所有使用该数据目录的 API/worker，等待启动终端退出及 guardian 清理。确认没有相关服务或工具仍在使用目录，`runtime/processing.guard` 不存在。目录中的 `.lock` 文件可在服务退出后留存，存在本身不表示锁仍被占用；不要靠删除锁文件停止服务。备份期间保持服务停止。
-2. 在 PowerShell 填写真实绝对路径，将整个数据目录复制到**不存在的新目录**。以下命令不下载依赖，不删除源文件；`robocopy` 的返回码 0–7 表示无复制失败，8 以上须检查并保留失败副本，另选新目录重做。
+Windows 可以在 PowerShell 用下面的命令检查端口，把示例 IP 和端口换成启动终端显示的值。看到 `TcpTestSucceeded: True` 表示端口连通，再在浏览器确认网页可打开。
 
 ```powershell
-$dataSource = 'C:\ReCue\data'
-$backupTarget = 'E:\ReCueBackups\snapshot-20261113'
-if (!(Test-Path -LiteralPath "$dataSource\recue.sqlite3")) { throw '数据库不存在' }
-if (Test-Path -LiteralPath "$dataSource\runtime\processing.guard") { throw '工具清理尚未确认，停止备份' }
-if (Test-Path -LiteralPath $backupTarget) { throw '请选择不存在的新备份目录' }
-robocopy $dataSource $backupTarget /E /COPY:DAT /DCOPY:DAT /R:0 /W:0 /XJ /XF *.lock
-if ($LASTEXITCODE -ge 8) { throw '备份复制失败，检查输出' }
+Test-NetConnection 192.168.88.8 -Port 4318
 ```
 
-保留 `recue.sqlite3` 及同目录可能存在的 `recue.sqlite3-wal`、`recue.sqlite3-shm`，并配套复制 `media/`；不要只拷贝主数据库。上述命令同时保留日志与临时目录，排除可重建的锁文件。使用普通本地目录，避免 junction/符号链接；`/XJ` 会跳过 junction，若数据曾被手工迁移为链接，应先核实实体文件，不将跳过的内容视为已备份。另行保管处理 JSON、工具完整目录（含 DLL）、模型及对应哈希、应用版本和锁文件。
+**提示没有找到网页或 uv。** 检查是否已经安装 uv，并在项目目录运行 `node recue.mjs setup`。该命令用于安装依赖和构建网页，需要联网。
 
-3. 保持服务停止，将备份复制到另一个不存在的新目录，再切换 `RECUE_DATA_DIR`，保留原目录以便回退：
+**提示端口已被占用。** 停止此前启动的 ReCue，等旧启动终端退出后再启动。如果端口由其他程序占用，可关闭该程序，或为 ReCue 设置其他端口。
 
-```powershell
-$restoreTarget = 'C:\ReCue\restored-data'
-if (Test-Path -LiteralPath $restoreTarget) { throw '请选择不存在的新恢复目录' }
-if (Test-Path -LiteralPath "$backupTarget\runtime\processing.guard") { throw '备份包含未确认的清理标记，不启动' }
-robocopy $backupTarget $restoreTarget /E /COPY:DAT /DCOPY:DAT /R:0 /W:0 /XJ /XF *.lock
-if ($LASTEXITCODE -ge 8) { throw '恢复复制失败，不启动服务' }
+**页面能打开，任务一直不动。** 查看页面右上角的状态和启动终端的提示。模型或工具路径错误时，请按[安装与模型下载](#安装与模型下载)重新配置并重启。已排队的文件无需重传。
 
+**需要断网使用。** 先在有网时完成安装和模型下载。保留项目中的 `.venv`、`frontend/dist` 和本地模型。断网时可以继续使用本机地址。若由另一台设备访问，需要保留设备之间的局域网连接。
 
-```
+## 备份与恢复
 
-4. 在 Git Bash 运行 `RECUE_DATA_DIR=C:/ReCue/restored-data node recue.mjs`（替换为实际恢复目录并沿用原部署配置）。查看健康状态、媒体列表及失败/中断记录，打开已完成媒体，核对讲稿、远端播放定位和保存进度。已删除媒体应仍不可见，旧上传 ID 查询应为 410。运行任务在停机后可能恢复为 interrupted，需要手动重试；备份不承诺识别中途续算。复核完成后再接收新上传。回退时先完整停止恢复实例，再把环境变量改回原目录，不能同时启动两份数据处理同一批操作。
-
-## 可信局域网与离线验收准备
-
-在处理电脑的 Bash 启动终端设置 `export RECUE_HOST=0.0.0.0`，启动后用 `ipconfig` 查找当前可信网络的 IPv4 地址。第二台电脑访问 `http://处理电脑IPv4:4318/`，无需安装 Python、模型或工具。按 Windows 防火墙提示仅允许可信的专用网络；需要手动规则时，将 TCP 端口限制在本地子网。仓库不自动修改防火墙。
-
-验收时在第二台电脑选择并上传新文件，确认后台完成，再打开讲稿、搜索和点击句子播放；刷新应恢复已保存位置且暂停。记录两端系统/浏览器、访问地址、媒体时长、处理结果和错误。处理电脑自访局域网 IP 不能替代第二台设备。
-
-首次联网准备完依赖后，保留 Node、uv 管理的 Python、项目 `.venv`、`frontend/dist`、FFmpeg/FFprobe、Whisper 完整运行目录与本地模型，配置全部指向本地资源。`setup` 是安装步骤，需要网络，不是离线启动命令；日常使用 `start` 的 `uv --offline --locked`。跨电脑复制 `.venv` 不保证可用，应在目标处理电脑先完成安装。
-
-真实离线验收须阻断互联网且保留两台设备间的局域网（或单独记录本机断网范围），冷启动服务及全新浏览器会话，通过新上传执行识别→讲稿→搜索→播放→进度恢复，记录网络状态和浏览器请求。`uv --offline`、静态资源无 CDN、浏览器模拟离线或已有成果可读都只属于准备检查，不能替代这项验收。目前第二台电脑及真实断网全流程仍未通过。
+1. 在处理电脑停止 ReCue，等启动终端退出。若仍有转写程序占用文件或 `data/runtime/processing.guard` 仍在，请先处理清理问题，再复制数据。
+2. 将项目下整个 `data/` 文件夹复制到一个新的目录。自定义过 `RECUE_DATA_DIR` 的话，请备份对应目录。数据库和 `media/` 必须一起复制。另存 `processing.local.json`、模型和相关工具，便于在另一台电脑恢复环境。
+3. 恢复时使用相同版本的 ReCue。先停止服务，把备份复制到新目录，保留当前的数据目录以便回退。可将原 `data/` 改名保留，再把备份副本放进项目并命名为 `data/`。使用自定义数据目录时，通过 `RECUE_DATA_DIR` 指向恢复出的目录。
+4. 启动后打开一条已有媒体，检查讲稿、播放和进度，再接收新上传。恢复旧备份会把数据回退到备份时的状态。

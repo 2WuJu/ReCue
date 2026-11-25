@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import socket
 import subprocess
@@ -9,7 +10,7 @@ import sys
 import tempfile
 import time
 import unittest
-from urllib.request import urlopen
+from urllib.request import ProxyHandler, build_opener, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
@@ -19,6 +20,58 @@ STOP = ROOT / "stop.mjs"
 
 @unittest.skipUnless(shutil.which("node"), "Node.js required for public launcher")
 class ScriptTests(unittest.TestCase):
+    def test_saved_network_mode_changes_web_listeners(self):
+        with tempfile.TemporaryDirectory(prefix="recue network ") as directory:
+            data = Path(directory) / "data"
+            env = {**os.environ, "RECUE_DATA_DIR": str(data)}
+            env.pop("RECUE_HOST", None)
+            command = ["node", str(ENTRY)]
+            http = build_opener(ProxyHandler({}))
+            lan_urls = []
+            for choice, mode in (("2", "lan"), ("1", "local")):
+                with self.subTest(mode=mode):
+                    configured = subprocess.run(command + ["configure"], input=f"{choice}\n",
+                                                encoding="utf-8", env=env, capture_output=True, timeout=10)
+                    self.assertEqual(configured.returncode, 0, configured.stderr)
+                    self.assertEqual((data / "network-mode").read_text().strip(), mode)
+                    with socket.socket() as sock:
+                        sock.bind(("0.0.0.0", 0))
+                        port = sock.getsockname()[1]
+                    log_path = Path(directory) / "network.log"
+                    with log_path.open("wb") as log:
+                        process = subprocess.Popen(command + ["--service", "api"], stdin=subprocess.DEVNULL,
+                                                   env={**env, "RECUE_PORT": str(port)}, stdout=log, stderr=log)
+                        try:
+                            deadline = time.monotonic() + 20
+                            while time.monotonic() < deadline:
+                                output = log_path.read_text(encoding="utf-8", errors="replace")
+                                self.assertIsNone(process.poll(), output)
+                                if "本机打开" in output and (
+                                    mode == "local" or "局域网打开" in output or "暂无可用的局域网地址" in output
+                                ):
+                                    break
+                                time.sleep(.1)
+                            else:
+                                self.fail(output)
+                            self.assertNotIn("ReCue 访问设置", output)
+                            with http.open(f"http://127.0.0.1:{port}/", timeout=3) as response:
+                                self.assertEqual(response.status, 200)
+                            if mode == "lan":
+                                lan_urls = re.findall(rf"局域网打开\s+http://([\d.]+):{port}/", output)
+                                for address in lan_urls:
+                                    with http.open(f"http://{address}:{port}/", timeout=3) as response:
+                                        self.assertEqual(response.status, 200)
+                            else:
+                                self.assertNotIn("局域网打开", output)
+                                for address in lan_urls:
+                                    with self.assertRaises(ConnectionRefusedError):
+                                        socket.create_connection((address, port), timeout=3).close()
+                        finally:
+                            if process.poll() is None:
+                                subprocess.run(command + ["stop", "--service", "api"], env=env,
+                                               capture_output=True, timeout=10, check=True)
+                                self.assertEqual(process.wait(timeout=20), 0)
+
     def test_start_stop_from_unrelated_directory(self):
         services = ("api", "all") if sys.platform in ("win32", "darwin") else ("api",)
         port = 0

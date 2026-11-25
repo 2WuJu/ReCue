@@ -1,4 +1,5 @@
 import argparse
+from contextlib import contextmanager
 import json
 import shutil
 import socket
@@ -6,6 +7,17 @@ import subprocess
 
 from app.config import Settings
 from app.repositories.database import migrate
+
+
+@contextmanager
+def bind_http_socket(host, port):
+    with socket.socket() as sock:
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        else:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((host, port))
+        yield sock
 
 
 def check(require_model=False, check_port=True):
@@ -22,20 +34,14 @@ def check(require_model=False, check_port=True):
     if require_model and not model:
         raise RuntimeError("Model missing: set RECUE_MODEL_PATH to an existing model file (M0 pending)")
     if check_port:
-        with socket.socket() as sock:
-            # Windows must reject an occupied port rather than share its binding.
-            if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
-                sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-            else:
-                # Match Uvicorn so recently closed connections don't block a restart.
-                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            try:
-                sock.bind((settings.host, settings.port))
-            except OSError as exc:
-                raise RuntimeError(
-                    f"Cannot bind {settings.host}:{settings.port}. "
-                    "Stop the conflicting service or set RECUE_PORT to an available port."
-                ) from exc
+        try:
+            with bind_http_socket(settings.host, settings.port):
+                pass
+        except OSError as exc:
+            raise RuntimeError(
+                f"Cannot bind {settings.host}:{settings.port}. "
+                "Stop the conflicting service or set RECUE_PORT to an available port."
+            ) from exc
     return {"database": "ok", "ffmpeg": "ok", "frontend": "ok",
             "model_file_available": model, "transcription_ready": False}
 

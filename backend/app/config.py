@@ -30,7 +30,7 @@ class Settings:
             ROOT / "frontend" / "dist",
             Path(model).resolve() if model else None,
             os.getenv("RECUE_FFMPEG", "ffmpeg"),
-            os.getenv("RECUE_HOST", "127.0.0.1"),
+            os.getenv("RECUE_HOST") or "127.0.0.1",
             port,
             Path(os.environ["RECUE_PROCESSING_CONFIG"]).resolve()
             if os.getenv("RECUE_PROCESSING_CONFIG") else None,

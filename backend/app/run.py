@@ -13,6 +13,7 @@ from app.preflight import check
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--service", choices=("all", "api", "worker"), default="all")
+    parser.add_argument("--lan-interfaces", help=argparse.SUPPRESS)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     settings = Settings.load()
@@ -27,8 +28,10 @@ def main():
         marker.unlink(missing_ok=True)
         commands = []
         if args.service in ("all", "api"):
-            commands.append([sys.executable, "-m", "uvicorn", "app.api.main:create_app", "--factory",
-                             "--host", settings.host, "--port", str(settings.port), "--no-access-log"])
+            api = [sys.executable, "-X", "utf8", "-m", "app.api.server"]
+            if args.lan_interfaces is not None:
+                api.extend(["--lan-interfaces", args.lan_interfaces])
+            commands.append(api)
         if args.service in ("all", "worker"):
             commands.append([sys.executable, "-m", "app.worker"])
         children = []
